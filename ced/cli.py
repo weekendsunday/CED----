@@ -167,6 +167,85 @@ def _cmd_case(args: argparse.Namespace) -> int:
     return 0 if outcome.passed else 1
 
 
+def _observations(left, right, compare_keys, diff_keys) -> None:
+    print(f"     {'字段':<18}{left.impl_id:<26}{right.impl_id}")
+    for key in compare_keys:
+        mark = "  ←" if key in diff_keys else ""
+        print(f"     {key:<18}{str(left.get(key)):<26}{right.get(key)}{mark}")
+
+
+def _cmd_probe(args: argparse.Namespace) -> int:
+    """探测一份原始字节：对全部（或指定）实现做差分，直接出判定。"""
+    import itertools
+
+    from .classify.upgradability import judge
+    from .differ.comparator import compare
+
+    payload = (sys.stdin.buffer.read() if args.file == "-"
+               else Path(args.file).read_bytes())
+    if not payload:
+        raise SystemExit("[!] 输入为空")
+
+    topo = load(args.topology) if args.topology else demo()
+    adapter = get_adapter(args.domain)
+    evaluator = Evaluator(topo.impls)
+
+    print(f"输入      {args.file}  （{len(payload)} 字节）")
+    print(f"拓扑      {topo.describe()}")
+    print("\n原始字节：")
+    _dump(payload)
+
+    if args.pair:
+        missing = [i for i in args.pair if i not in evaluator.specs]
+        if missing:
+            raise SystemExit(f"[!] 拓扑里没有这些实现：{missing}\n"
+                             f"    可选：{', '.join(evaluator.specs)}")
+        pairs = [tuple(args.pair)]
+    else:
+        pairs = list(itertools.combinations(list(evaluator.specs), 2))
+
+    hits = []
+    for left_id, right_id in pairs:
+        left = evaluator(left_id, payload)
+        right = evaluator(right_id, payload)
+        div = compare("probe", "probe", payload, left, right, adapter.compare_keys)
+        if div is None:
+            if args.show:
+                print(f"\n[—] {left_id} ↔ {right_id}：两侧理解一致")
+                _observations(left, right, adapter.compare_keys, set())
+            continue
+        kind = adapter.classify([d.key for d in div.diffs])
+        verdict = judge(div, kind, adapter, evaluator)
+        hits.append((left_id, right_id, left, right, div, kind, verdict))
+
+    print(f"\n比较      {len(pairs)} 组 → 发现分歧 {len(hits)} 组")
+    if not hits:
+        print("\n所有组合在结构字段上理解一致。")
+        print("注意：这不等于安全，只说明在这份输入上两侧没有分歧。")
+        return 0
+
+    for left_id, right_id, obs_l, obs_r, div, kind, verdict in hits:
+        print(f"\n{'-' * 72}")
+        print(f"{left_id}  ↔  {right_id}      判定 {verdict.level}  （{kind}）")
+        if args.pair:
+            print()
+            _observations(obs_l, obs_r, adapter.compare_keys, set(div.keys))
+        print(f"  分歧字段  {', '.join(div.keys)}")
+        print(f"  理由      {verdict.reason}")
+        if verdict.ablation:
+            print(f"  可控性    {verdict.ablation}")
+        if verdict.cwe:
+            print(f"  CWE       {verdict.cwe}　场景 {verdict.scenario}")
+        print(f"  后果      {verdict.effect}")
+        print(f"  修复      {verdict.fix}")
+
+    if not args.pair:
+        print(f"\n{'=' * 72}")
+        print("看某一对的完整观测：python -m ced probe <file> --pair "
+              f"{hits[0][0]} {hits[0][1]}")
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .probe.server import serve
     serve(args.host, args.data_port, args.api_port, reference.policy_of(args.policy))
@@ -222,6 +301,15 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--raw", action="store_true",
                    help="只输出原始字节，可管道给 nc/curl 打靶")
     c.set_defaults(func=_cmd_case)
+
+    p = sub.add_parser("probe", help="探测一份原始字节文件（任意请求），对全部或指定实现做差分")
+    p.add_argument("file", help="原始字节文件；用 - 从 stdin 读")
+    p.add_argument("--pair", nargs=2, metavar=("LEFT", "RIGHT"),
+                   help="只比较指定的一对实现，并打印两侧完整观测")
+    p.add_argument("--topology", default=None, help="拓扑文件（YAML/JSON）；缺省用内置 demo")
+    p.add_argument("--domain", default="http1-framing", choices=sorted(ADAPTERS))
+    p.add_argument("--show", action="store_true", help="即使无分歧也打印两侧观测")
+    p.set_defaults(func=_cmd_probe)
 
     i = sub.add_parser("impls", help="列出参照实现与定向对照")
     i.set_defaults(func=_cmd_impls)

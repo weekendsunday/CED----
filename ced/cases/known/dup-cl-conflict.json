@@ -1,0 +1,13 @@
+{
+  "id": "dup-cl-conflict",
+  "axis": "cl_value",
+  "left": "ref-cl-first",
+  "right": "ref-lenient-cl",
+  "expect_kind": "framing_boundary",
+  "expect_fields": [
+    "consumed"
+  ],
+  "payload_b64": "UE9TVCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiA1DQpDb250ZW50LUxlbmd0aDogNA0KDQpBQUFBQQ==",
+  "reference": "RFC 9112 6.2",
+  "note": "冲突 CL：一侧按 400 拒绝，另一侧取第一个值，消费字节数不同。"
+}

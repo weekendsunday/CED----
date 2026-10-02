@@ -1,0 +1,13 @@
+{
+  "id": "obs-fold",
+  "axis": "header_syntax",
+  "left": "ref-cl-first",
+  "right": "ref-loose-headers",
+  "expect_kind": "framing_boundary",
+  "expect_fields": [
+    "consumed"
+  ],
+  "payload_b64": "UE9TVCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNClgtQTogMQ0KIGZvbGRlZC1wYXJ0DQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
+  "reference": "RFC 9112 5.2 (obs-fold 已废弃)",
+  "note": "折行头：一侧拒绝，另一侧接受并拼接。"
+}

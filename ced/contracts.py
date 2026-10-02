@@ -1,0 +1,136 @@
+"""核心数据契约。
+
+所有模块只 import 这里，模块之间不互相 import 具体实现。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+# --------------------------------------------------------------------------- 被测对象
+
+@dataclass(frozen=True)
+class ImplSpec:
+    """一个被测产品（实现）。"""
+
+    impl_id: str
+    name: str
+    version: str = ""
+    role: str = "solo"            # front | back | solo
+    runner: str = "local"         # local | socket
+    policy: str | None = None     # local 参照实现的策略名
+    endpoint: str | None = None   # socket/chain 模式：host:port（探针，或前置入口）
+    probe_api: str | None = None  # chain 模式：前置后面那个探针的控制口
+    image: str | None = None      # 真实产品：镜像名（由 docker-compose 启动）
+    notes: str = ""
+
+    def __str__(self) -> str:  # noqa: D105
+        return self.impl_id
+
+
+# --------------------------------------------------------------------------- 观测
+
+#: 参与差分的观测字段。适配器可覆盖。
+DEFAULT_COMPARE_KEYS: tuple[str, ...] = (
+    "accepted",
+    "status",
+    "framing_source",
+    "cl",
+    "te",
+    "body_len",
+    "consumed",
+    "leftover_len",
+)
+
+
+@dataclass
+class Observation:
+    """一个实现对一段字节的"理解"。"""
+
+    impl_id: str = ""
+    ok: bool = True
+    error: str | None = None
+    fields: dict[str, Any] = field(default_factory=dict)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.fields.get(key, default)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"impl_id": self.impl_id, "ok": self.ok,
+                "error": self.error, "fields": dict(self.fields)}
+
+
+# --------------------------------------------------------------------------- 差分
+
+@dataclass
+class FieldDiff:
+    key: str
+    left: Any
+    right: Any
+
+    def describe(self) -> str:
+        return f"{self.key}: {self.left!r} != {self.right!r}"
+
+
+@dataclass
+class Divergence:
+    """两个实现对同一段字节的理解不一致。"""
+
+    case_id: str
+    axis: str
+    payload: bytes
+    left: Observation
+    right: Observation
+    diffs: list[FieldDiff] = field(default_factory=list)
+
+    @property
+    def keys(self) -> list[str]:
+        return [d.key for d in self.diffs]
+
+    def summary(self) -> str:
+        return (f"[{self.axis}] {self.left.impl_id} vs {self.right.impl_id}: "
+                + "; ".join(d.describe() for d in self.diffs))
+
+
+# --------------------------------------------------------------------------- 判定
+
+#: 判定级别
+LEVEL_SECURITY = "security"
+LEVEL_COMPAT = "compatibility"
+LEVEL_UNKNOWN = "unknown"
+
+
+@dataclass
+class Verdict:
+    """可升级性判定结果。"""
+
+    level: str = LEVEL_UNKNOWN
+    kind: str = "unclassified"     # framing_boundary | syntax | chunk | request_line | status_only
+    reason: str = ""
+    cwe: str | None = None
+    scenario: str | None = None    # desync | bypass | None
+    controllable: bool = False     # 分歧点是否由攻击者可控的字节承载
+    ablation: str | None = None    # 证明可控性的消融实验
+    effect: str = ""               # 安全后果（判定时由领域适配器给出）
+    fix: str = ""                  # 修复建议（同上）
+
+    @property
+    def is_security(self) -> bool:
+        return self.level == LEVEL_SECURITY
+
+
+@dataclass
+class Finding:
+    """最终产出。"""
+
+    divergence: Divergence
+    verdict: Verdict
+    minimized: bytes | None = None
+    original_len: int = 0
+    minimized_len: int = 0
+    chain_evidence: str | None = None
+
+    @property
+    def case_id(self) -> str:
+        return self.divergence.case_id

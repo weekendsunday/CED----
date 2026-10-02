@@ -1,0 +1,13 @@
+{
+  "id": "cl-leading-zero",
+  "axis": "cl_value",
+  "left": "ref-cl-first",
+  "right": "ref-lenient-cl",
+  "expect_kind": "framing_boundary",
+  "expect_fields": [
+    "consumed"
+  ],
+  "payload_b64": "UE9TVCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiAwMw0KDQphYmM=",
+  "reference": "RFC 9112 6.3 (Content-Length 语法)",
+  "note": "前导零：严格实现判为非法 CL，宽松实现接受。"
+}

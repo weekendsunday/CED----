@@ -1,0 +1,38 @@
+# 客户拓扑样例：两种接入方式
+#
+#   # ① 纯基准（不需要任何外部服务）
+#   python -m ced scan --mode axis --out report.md
+#
+#   # ② 链路观测：先把探针放在客户产品后面
+#   python -m ced serve --policy ref-cl-first --data-port 8800 --api-port 8801
+#   python -m ced scan --topology ced/topologies/example.yaml --out customer.md
+#
+# 拓扑文件支持 YAML 或 JSON；没有 PyYAML 时自动退回 JSON，不强制依赖。
+domain: http1-framing
+
+impls:
+  # 链路侧：客户的真实产品。runner=chain 表示
+  #   endpoint   = 客户产品对外入口（前置）
+  #   probe_api  = 前置**后面**那个 CED 探针的控制口
+  # 观测到的是"客户产品转发出去的字节"，再与本地参照实现对比。
+  - id: customer-gateway
+    name: customer-gateway
+    version: "3.2"
+    role: front
+    runner: chain
+    endpoint: 127.0.0.1:8080
+    probe_api: 127.0.0.1:8801
+
+  # 基准侧：本地参照实现（进程内，零依赖）
+  - id: ref-cl-first
+    role: back
+    runner: local
+    policy: ref-cl-first
+
+  - id: ref-te-first
+    role: back
+    runner: local
+    policy: ref-te-first
+
+# 客户真实链路（前置 → 后端）：用于在报告里说明"若二者串联会怎样"
+chain: [customer-gateway, ref-te-first]

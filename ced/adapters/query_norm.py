@@ -20,7 +20,7 @@ from __future__ import annotations
 import random
 
 from ..contracts import ImplSpec, Quantified
-from ..differ.comparator import diverges
+from ..classify.upgradability import still_diverges
 from ..impls import query_reference
 from ..impls.query_norm import parse_query
 from ..minimize.ddmin import ddmin
@@ -201,9 +201,7 @@ class QueryNormAdapter:
                 continue
             if candidate == div.payload:
                 continue           # 这条变换对当前输入没动作，不构成证据
-            left = evaluate(div.left.impl_id, candidate)
-            right = evaluate(div.right.impl_id, candidate)
-            if not diverges(left, right, self.compare_keys):
+            if not still_diverges(candidate, div, evaluate, self.compare_keys):
                 carriers.append(label)
         return carriers
 

@@ -9,6 +9,32 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# --------------------------------------------------------------------------- 观测失败
+
+class ProbeUnreachable(RuntimeError):
+    """链路故障（端口没人听、探针没起来、前置既没转发也没回响应）→ **中止**。
+
+    绝不允许合成一个"看起来像观测"的结果：合成出来的观测必然与基线不同，
+    会把"探测失败"整片变成假阳性安全结论。
+    """
+
+
+class ProbeRejected(RuntimeError):
+    """前置收到字节、但按自身策略拒绝转发（真实 nginx 对畸形请求回 400 就属此类）。
+
+    这是**前置行为的如实记录**，不是链路故障 —— 若当成故障，一轮扫描会在第一条
+    畸形请求上崩掉。处置分两处，口径一致：
+
+      * 主观测被拒 → 跳过该条用例并计数（``pipeline``），既不合成视角也不谎称探过；
+      * **消融候选被拒** → 该候选不算承载者（``classify.upgradability.still_diverges``），
+        因为"分歧是否消失"无从观测，不能凭空造出可控性证据。
+
+    放在这里而不是 ``probe/errors.py``：它由各层共用（pipeline / 适配器 / 探针），
+    而 ``ced.probe`` 包会 import ``evaluator`` → ``adapters``，适配器再回头 import 它
+    就成环了。
+    """
+
+
 # --------------------------------------------------------------------------- 被测对象
 
 @dataclass(frozen=True)

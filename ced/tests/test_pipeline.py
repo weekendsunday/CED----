@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ced.adapters.http1_framing import (KIND_FRAMING_BOUNDARY,
                                         Http1FramingAdapter, meta_of)
 from ced.classify.upgradability import judge
-from ced.contracts import (LEVEL_COMPAT, LEVEL_SECURITY, Divergence, FieldDiff,
-                           Observation)
+from ced.contracts import (LEVEL_COMPAT, LEVEL_SECURITY, LEVEL_UNKNOWN, Divergence,
+                           FieldDiff, Observation, ProbeRejected)
 from ced.differ.comparator import compare, diff_keys
 from ced.impls import reference
 from ced.minimize.ddmin import minimize_headers
@@ -245,6 +245,51 @@ class TestPipelineAndStore(unittest.TestCase):
             self.assertEqual(stats["cases"],
                              len({d.case_id for d in result.divergences}))
             self.assertGreater(stats["cases"], 0)
+
+
+class TestAblationGuard(unittest.TestCase):
+    """消融候选被前置拒绝时，"观测不到"绝不能被当成"分歧消失了"。
+
+    真前置会拒掉一部分消融候选（本机实测：nginx 1.25.5 在抹掉 Content-Length 之后
+    直接 400、根本不转发）。这时"分歧是否消失"无从观测 —— 若把它当成"消失了"，
+    就会凭空造出可控性证据、把兼容性噪声升格成 security 结论。
+    """
+
+    def _divergence(self) -> Divergence:
+        left = EVAL("ref-cl-first", CL_TE_PAYLOAD)
+        right = EVAL("ref-te-first", CL_TE_PAYLOAD)
+        div = compare(case_id_of(CL_TE_PAYLOAD), "cl-te-conflict", CL_TE_PAYLOAD,
+                      left, right, ADAPTER.compare_keys)
+        self.assertIsNotNone(div, "该 payload 应当产生分歧（对照组前提）")
+        return div
+
+    def _kind(self, div: Divergence) -> str:
+        return ADAPTER.classify([d.key for d in div.diffs])
+
+    def test_rejected_everywhere_yields_unknown_not_security(self):
+        """所有消融候选都被拒 → 承载者必须为空，判定必须保守落在 unknown。"""
+        div = self._divergence()
+
+        def rejecting(impl_id: str, candidate: bytes) -> Observation:
+            if candidate != CL_TE_PAYLOAD:
+                raise ProbeRejected("前置按自身策略拒绝了这条消融候选")
+            return EVAL(impl_id, candidate)
+
+        carriers = ADAPTER.ablate(div, rejecting)
+        self.assertEqual(carriers, [],
+                         f"被拒绝的候选被误判成承载者：{carriers}")
+        verdict = judge(div, self._kind(div), ADAPTER, rejecting)
+        self.assertEqual(verdict.level, LEVEL_UNKNOWN,
+                         f"测不到可控性就必须保守，不能升级：{verdict.level}")
+        self.assertFalse(verdict.is_security)
+
+    def test_normal_ablation_still_finds_carriers(self):
+        """对照组：全都观测得到时，消融必须照常定位到承载者（防护不能把正常路径也堵死）。"""
+        div = self._divergence()
+        carriers = ADAPTER.ablate(div, EVAL)
+        self.assertTrue(carriers, "正常可观测时应当能定位到承载者")
+        self.assertEqual(judge(div, self._kind(div), ADAPTER, EVAL).level,
+                         LEVEL_SECURITY)
 
 
 if __name__ == "__main__":

@@ -10,9 +10,8 @@ import random
 from dataclasses import dataclass, field
 
 from .classify.upgradability import judge
-from .contracts import Divergence, Finding
+from .contracts import Divergence, Finding, ProbeRejected
 from .differ.comparator import compare, diff_keys
-from .probe.errors import ProbeRejected
 
 
 def case_id_of(payload: bytes) -> str:
@@ -131,8 +130,13 @@ def scan(adapter, evaluator, *, mode: str = "axis", limit: int | None = None,
 
         if do_minimize and verdict.is_security:
             def keeps_divergence(candidate: bytes) -> bool:      # 最小化用的谓词
-                lv = evaluator(left_id, candidate)
-                rv = evaluator(right_id, candidate)
+                try:
+                    lv = evaluator(left_id, candidate)
+                    rv = evaluator(right_id, candidate)
+                except ProbeRejected:
+                    # 前置拒了这条更小的候选 → 观测不到，别拿它替换原样本
+                    # （最小化只是让样本更好读，不值得为它冒任何风险）
+                    return False
                 return bool(diff_keys(lv, rv, adapter.compare_keys))
 
             minimized = adapter.minimize(payload, keeps_divergence)

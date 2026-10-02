@@ -6,10 +6,11 @@
   chain  —— 真实前置 → 探针，观测"前置转发出去的字节"
 
 探针协议刻意避开"等空闲超时"：客户端发完即半关闭写端，服务端读到 EOF 立刻回复。
+**但真实 nginx 吃不下客户端半关闭**（实测：它既不转发也不回响应），所以链路器
+先试半关闭、失败再换普通客户端模式；失败类型见 ``ced.contracts`` 的
+``ProbeRejected`` / ``ProbeUnreachable``。
 """
 from .chain import ChainEvaluator
-from .errors import ProbeRejected, ProbeUnreachable
 from .evaluator import Evaluator, LocalEvaluator, SocketEvaluator
 
-__all__ = ["Evaluator", "LocalEvaluator", "SocketEvaluator", "ChainEvaluator",
-           "ProbeRejected", "ProbeUnreachable"]
+__all__ = ["Evaluator", "LocalEvaluator", "SocketEvaluator", "ChainEvaluator"]

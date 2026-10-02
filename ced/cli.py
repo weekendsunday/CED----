@@ -18,7 +18,8 @@ from .adapters import ADAPTERS, get as get_adapter
 from .impls import reference
 from .orchestrate.topology import demo, load
 from .pipeline import scan
-from .probe import Evaluator, ProbeUnreachable
+from .contracts import ProbeUnreachable
+from .probe import Evaluator
 from .report.renderer import render_json, render_markdown
 from . import store
 

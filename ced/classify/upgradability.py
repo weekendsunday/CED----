@@ -18,7 +18,7 @@ import re
 from typing import Callable
 
 from ..contracts import (LEVEL_COMPAT, LEVEL_SECURITY, LEVEL_UNKNOWN,
-                         Divergence, Observation, Verdict)
+                         Divergence, Observation, ProbeRejected, Verdict)
 from ..differ.comparator import diff_keys
 from .. import httpmsg
 
@@ -26,10 +26,21 @@ from .. import httpmsg
 Evaluator = Callable[[str, bytes], Observation]
 
 
-def _still_diverges(candidate: bytes, div: Divergence,
-                    evaluate: Evaluator, compare_keys: tuple[str, ...]) -> bool:
-    left = evaluate(div.left.impl_id, candidate)
-    right = evaluate(div.right.impl_id, candidate)
+def still_diverges(candidate: bytes, div: Divergence,
+                   evaluate: Evaluator, compare_keys: tuple[str, ...]) -> bool:
+    """消融实验的判据：把 candidate 重放两侧，看分歧是否仍然存在。
+
+    返回 ``False`` 的分量很重 —— "这个候选让分歧消失了"，于是它会被认定为
+    承载者、进而把 boundary 类分歧升级成 ``security``。所以**观测不到的时候
+    绝不能返回 False**：真实前置会拒掉一部分消融候选（实测：nginx 1.25.5 在
+    抹掉 Content-Length 之后直接 400，根本不转发），这时"分歧是否消失"无从观测，
+    凭空返回 False 就是拿兼容性噪声造安全结论。宁可不升级（留给复核），不可滥报。
+    """
+    try:
+        left = evaluate(div.left.impl_id, candidate)
+        right = evaluate(div.right.impl_id, candidate)
+    except ProbeRejected:
+        return True
     return bool(diff_keys(left, right, compare_keys))
 
 
@@ -73,21 +84,21 @@ def ablate_headers(payload: bytes, div: Divergence, evaluate: Evaluator,
     if msg is None:
         return []
 
-    def still_diverges(candidate: bytes) -> bool:
-        return _still_diverges(candidate, div, evaluate, compare_keys)
+    def still_diverges_for(candidate: bytes) -> bool:
+        return still_diverges(candidate, div, evaluate, compare_keys)
 
     carriers: list[str] = []
 
     for index, line in msg.header_lines():
         candidate = httpmsg.drop_line(msg, index).build()
-        if candidate != payload and not still_diverges(candidate):
+        if candidate != payload and not still_diverges_for(candidate):
             carriers.append(f"移除请求头 `{line.decode('latin-1')}`")
 
     for variant in _request_line_variants(msg.lines[0]):
         candidate = httpmsg.Message(lines=[variant] + msg.lines[1:],
                                     eol=msg.eol, sep=msg.sep,
                                     tail=msg.tail).build()
-        if not still_diverges(candidate):
+        if not still_diverges_for(candidate):
             carriers.append(f"把请求行规范化成 `{variant.decode('latin-1')}`")
 
     return carriers

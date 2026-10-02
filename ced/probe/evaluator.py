@@ -11,10 +11,9 @@ import json
 import socket
 
 from ..adapters import ADAPTERS
-from ..contracts import ImplSpec, Observation
+from ..contracts import ImplSpec, Observation, ProbeUnreachable
 from ..impls import local_parser
 from .chain import ChainEvaluator
-from .errors import ProbeUnreachable
 
 SOCKET_TIMEOUT = 10.0
 DEFAULT_PROBE_PORT = 8800

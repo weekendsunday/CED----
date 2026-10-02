@@ -25,6 +25,7 @@ from ..impls import query_reference
 from ..impls.query_norm import parse_query
 from ..minimize.ddmin import ddmin
 from ..mutate import query_axes
+from .base import http_request_fields
 from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
@@ -151,6 +152,17 @@ class QueryNormAdapter:
     def local_parser(self) -> tuple:
         """本地解析器：查询串解析内核 + 参照实现的策略表。"""
         return query_reference.policy_of, parse_query
+
+    def extract(self, raw: bytes) -> bytes:
+        """能认出完整请求就取 target 里 ``?`` 之后的查询串；否则原样返回。
+
+        认出请求但 target 里没有 ``?`` → 查询串为空，返回 ``b""``。
+        """
+        fields = http_request_fields(raw)
+        if fields is None:
+            return raw
+        target = fields[0]
+        return target.split(b"?", 1)[1] if b"?" in target else b""
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(query_reference.AXIS_PAIRS)

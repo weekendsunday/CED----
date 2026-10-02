@@ -21,8 +21,8 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from ..impls import reference
-from ..impls.http_reader import parse_request
+from ..adapters import ADAPTERS, names
+from ..impls import local_specs
 
 MAX_BYTES = 1 << 20        # 1MB 上限，防内存爆炸
 IDLE_TIMEOUT = 5.0         # 兜底：客户端不半关闭时
@@ -34,17 +34,18 @@ _next_id = 1
 
 # --------------------------------------------------------------------------- 观测
 
-def observe(payload: bytes, policy) -> dict:
-    res = parse_request(payload, policy)
+def observe(payload: bytes, policy, parse, extract) -> dict:
+    res = parse(extract(payload), policy)
     return {"ok": res.ok,
             "error": None if res.ok else res.reason,
             "fields": res.to_fields()}
 
 
-def record(payload: bytes, policy) -> dict:
+def record(payload: bytes, policy, parse, extract) -> dict:
     """记录一个视角并返回它（id 单调递增，供差分器区分新旧）。"""
     global _next_id
-    view = {"id": 0, "raw_len": len(payload), **observe(payload, policy)}
+    view = {"id": 0, "raw_len": len(payload),
+            **observe(payload, policy, parse, extract)}
     with _lock:
         view["id"] = _next_id
         _next_id += 1
@@ -73,7 +74,7 @@ def _http_reply(obs: dict) -> bytes:
             b"Connection: close\r\n\r\n" + body)
 
 
-def handle_conn(conn: socket.socket, policy) -> None:
+def handle_conn(conn: socket.socket, policy, parse, extract) -> None:
     conn.settimeout(IDLE_TIMEOUT)
     buf = b""
     try:
@@ -85,7 +86,7 @@ def handle_conn(conn: socket.socket, policy) -> None:
             if not chunk:              # 客户端半关闭 → 立刻处理
                 break
             buf += chunk
-        conn.sendall(_http_reply(record(buf, policy)))
+        conn.sendall(_http_reply(record(buf, policy, parse, extract)))
     except OSError:
         pass
     finally:
@@ -126,7 +127,12 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
 # --------------------------------------------------------------------------- 启动
 
-def serve(host: str, data_port: int, api_port: int, policy) -> None:
+def serve(host: str, data_port: int, api_port: int, policy,
+          *, domain: str = "http1-framing") -> None:
+    adapter = ADAPTERS[domain]()
+    _, parse = adapter.local_parser()
+    extract = adapter.extract
+
     api = ThreadingHTTPServer((host, api_port), _ApiHandler)
     threading.Thread(target=api.serve_forever, daemon=True).start()
 
@@ -135,10 +141,11 @@ def serve(host: str, data_port: int, api_port: int, policy) -> None:
     srv.bind((host, data_port))
     srv.listen(64)
     print(f"probe ready: data={host}:{data_port} api={host}:{api_port} "
-          f"policy={policy.name}", flush=True)
+          f"domain={domain} policy={policy.name}", flush=True)
     while True:
         conn, _ = srv.accept()
-        threading.Thread(target=handle_conn, args=(conn, policy), daemon=True).start()
+        threading.Thread(target=handle_conn,
+                         args=(conn, policy, parse, extract), daemon=True).start()
 
 
 def main() -> None:
@@ -146,13 +153,20 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="CED 探针服务")
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--domain", choices=names(), default="http1-framing",
+                    help="领域名（默认 http1-framing）")
     ap.add_argument("--data-port", type=int, default=8800)
     ap.add_argument("--api-port", type=int, default=8801)
-    ap.add_argument("--policy", default="ref-cl-first",
-                    help="参照实现策略名，见 ced.impls.reference.REFERENCES")
+    ap.add_argument("--policy", default=None,
+                    help="参照实现策略名，默认取该领域第一个参照实现；"
+                         "见 ced.impls.reference.REFERENCES / 各领域 *_reference")
     args = ap.parse_args()
-    serve(args.host, args.data_port, args.api_port,
-          reference.policy_of(args.policy))
+
+    adapter = ADAPTERS[args.domain]()
+    policy_of, _ = adapter.local_parser()
+    impl_id = args.policy or local_specs(args.domain)[0].impl_id
+    serve(args.host, args.data_port, args.api_port, policy_of(impl_id),
+          domain=args.domain)
 
 
 if __name__ == "__main__":

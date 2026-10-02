@@ -39,6 +39,23 @@ class DomainAdapter(Protocol):
         """
         ...
 
+    def extract(self, raw: bytes) -> bytes:
+        """从"某处收到的字节"里取出**本领域的观测对象**。
+
+        输入有两种可能，实现必须都容忍：
+
+        * **完整请求**（真实链路里前置转发出来的字节，含 ``HTTP/1.`` 请求行）——
+          能认出就取本领域字段：``url-norm`` / ``enc-norm`` 取请求行的 target，
+          ``host-norm`` 取 Host 头的值，``query-norm`` 取 target 里 ``?`` 之后的
+          查询串（没有 ``?`` 则返回空字节 ``b""``）。
+        * **本领域对象本身**（内置语料就是裸对象，没有请求行）—— 原样返回。
+
+        ``http1-framing`` 的观测对象就是整条请求，永远原样返回。
+        "能不能认出请求"由 ``ced.httpmsg.split`` 与请求行里的 ``HTTP/1.`` 判定；
+        认不出就原样返回。
+        """
+        ...
+
     def pairs(self) -> dict[str, tuple[str, str]]:
         """定向对照：轴名 → (左实现, 右实现)。"""
         ...
@@ -95,7 +112,37 @@ class DomainAdapter(Protocol):
         ...
 
 
-__all__ = ["DomainAdapter", "DEFAULT_COMPARE_KEYS", "axis_names"]
+__all__ = ["DomainAdapter", "DEFAULT_COMPARE_KEYS", "axis_names",
+           "http_request_fields"]
+
+
+def http_request_fields(raw: bytes) -> tuple[bytes, bytes] | None:
+    """认出完整 HTTP/1.x 请求 → ``(target, host)``；认不出 → ``None``。
+
+    "完整请求"由两件事共同判定：``ced.httpmsg.split`` 能找到头部终止符（消息
+    结构完整），且首行是含 ``HTTP/1.`` 的请求行（``GET /p HTTP/1.1``）。
+
+    ``host`` 取 Host 头的值（去掉头名与两端空白）；没有 Host 头则为 ``b""``。
+    裸对象（内置语料：一个请求目标 / 一段 Host / 一段查询串）不含请求行，
+    因此返回 ``None``，由各适配器的 ``extract`` 原样返回。
+    """
+    from ..httpmsg import header_name, split
+
+    msg = split(raw)
+    if msg is None or not msg.lines:
+        return None
+    request_line = msg.lines[0]
+    if b"HTTP/1." not in request_line:
+        return None
+    parts = request_line.split(b" ")
+    target = parts[1] if len(parts) >= 2 else b""
+    host = b""
+    for line in msg.lines[1:]:
+        if header_name(line) == b"host":
+            _, _, value = line.partition(b":")
+            host = value.strip()
+            break
+    return target, host
 
 
 def axis_names(adapter) -> tuple[str, ...]:

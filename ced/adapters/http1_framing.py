@@ -79,6 +79,10 @@ class Http1FramingAdapter:
         from ..impls.http_reader import parse_request
         return reference.policy_of, parse_request
 
+    def extract(self, raw: bytes) -> bytes:
+        """分帧领域的观测对象就是整条请求，原样返回。"""
+        return raw
+
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(reference.AXIS_PAIRS)
 

@@ -10,10 +10,9 @@ from __future__ import annotations
 import json
 import socket
 
+from ..adapters import ADAPTERS
 from ..contracts import ImplSpec, Observation
 from ..impls import local_parser
-from ..impls import reference
-from ..impls.http_reader import parse_request
 from .chain import ChainEvaluator
 from .errors import ProbeUnreachable
 
@@ -34,16 +33,29 @@ def http_body(raw: bytes) -> bytes:
 
 
 class LocalEvaluator:
-    """进程内跑参照实现。按 ``spec.domain`` 分派到该领域的解析器。"""
+    """进程内跑参照实现。按 ``spec.domain`` 分派到该领域的解析器。
+
+    与探针服务同一条口径：先按领域的 ``extract`` 从原始字节里取出观测对象，
+    再交给该领域的解析器。内置语料是裸对象（``extract`` 原样返回）行为不变；
+    喂完整请求时，两侧（本地参照实现 / 探针）可比较。
+    """
 
     def __init__(self, specs: dict[str, ImplSpec]) -> None:
         self._specs = specs
+        self._extract: dict[str, object] = {}
+
+    def _extractor(self, domain: str):
+        extract = self._extract.get(domain)
+        if extract is None:
+            extract = ADAPTERS[domain]().extract
+            self._extract[domain] = extract
+        return extract
 
     def __call__(self, impl_id: str, payload: bytes) -> Observation:
         spec = self._specs[impl_id]
         policy_of, parse = local_parser(spec.domain)
         policy = policy_of(spec.policy or spec.impl_id)
-        res = parse(payload, policy)
+        res = parse(self._extractor(spec.domain)(payload), policy)
         return Observation(impl_id=impl_id, ok=res.ok,
                            error=None if res.ok else res.reason,
                            fields=res.to_fields())

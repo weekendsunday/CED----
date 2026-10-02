@@ -22,6 +22,7 @@ from ..differ.comparator import diverges
 from ..impls import enc_reference
 from ..impls.enc_norm import interpret
 from ..mutate import enc_axes
+from .base import http_request_fields
 from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
@@ -101,6 +102,11 @@ class EncNormAdapter:
     def local_parser(self) -> tuple:
         """本地解析器：编码解释内核 + 解释参照实现的策略表。"""
         return enc_reference.policy_of, interpret
+
+    def extract(self, raw: bytes) -> bytes:
+        """能认出完整请求就取请求行的 target；否则视作裸对象原样返回。"""
+        fields = http_request_fields(raw)
+        return fields[0] if fields is not None else raw
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(enc_reference.AXIS_PAIRS)

@@ -26,6 +26,7 @@ from ..impls import url_reference
 from ..impls.path_norm import normalize_target
 from ..minimize.ddmin import minimize_segments
 from ..mutate import url_axes
+from .base import http_request_fields
 from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
@@ -113,6 +114,11 @@ class UrlNormAdapter:
     def local_parser(self) -> tuple:
         """本地解析器：路径归一化内核 + 归一化参照实现的策略表。"""
         return url_reference.policy_of, normalize_target
+
+    def extract(self, raw: bytes) -> bytes:
+        """能认出完整请求就取请求行的 target；否则视作裸对象原样返回。"""
+        fields = http_request_fields(raw)
+        return fields[0] if fields is not None else raw
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(url_reference.AXIS_PAIRS)

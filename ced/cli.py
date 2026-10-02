@@ -539,7 +539,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             args=(args.front_mode, args.front_port, args.data_port, args.host),
             daemon=True).start()
 
-    serve(args.host, args.data_port, args.api_port, reference.policy_of(args.policy))
+    from .impls import local_specs
+
+    adapter = ADAPTERS[args.domain]()
+    policy_of, _ = adapter.local_parser()
+    impl_id = args.policy or local_specs(args.domain)[0].impl_id
+    serve(args.host, args.data_port, args.api_port, policy_of(impl_id),
+          domain=args.domain)
     return 0
 
 
@@ -548,7 +554,10 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
     把外部发现（nuclei / Burp / HAR / curl / 普通清单）当成「待验证的假设」，
     喂进与扫描完全相同的 oracle 链（差分 → 消融 → 判定 → 最小化），
-    输出**已证实 / 已证伪 / 证不了** —— 判定仍由内核给出，不由报告方自述。
+    输出**已证实 / 未证实 / 证不了** —— 判定仍由内核给出，不由报告方自述。
+
+    「未证实」的口径刻意保守：它只说明**在试过的这些领域的参照实现之间看不出分歧**，
+    不等于这条发现是假的（真实产品可能有本工具尚未建模的归一化口径）。
     """
     from .intake import load, verify as verify_hypotheses
 
@@ -574,9 +583,9 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
     print("-" * 66)
     print(f"[验证] 共 {len(results)} 条假设　"
-          f"已证实 {counts['confirmed']}　已证伪 {counts['refuted']}　"
+          f"已证实 {counts['confirmed']}　未证实 {counts['refuted']}　"
           f"证不了 {counts['unverifiable']}")
-    labels = {"confirmed": "已证实", "refuted": "已证伪", "unverifiable": "证不了"}
+    labels = {"confirmed": "已证实", "refuted": "未证实", "unverifiable": "证不了"}
     for item in results:
         head = f"  [{labels.get(item.verdict, item.verdict)}] {item.hypothesis.target[:60]}"
         if item.verdict == "confirmed":
@@ -588,7 +597,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if args.out:
         lines = ["# 外部发现验证报告", "",
                  f"- 清单：`{args.input}`　共 {len(results)} 条",
-                 f"- 已证实：{counts['confirmed']}　已证伪：{counts['refuted']}　"
+                 f"- 已证实：{counts['confirmed']}　未证实：{counts['refuted']}　"
                  f"证不了：{counts['unverifiable']}", "",
                  "> 判定由确定性内核给出（差分 + 消融），不是报告方的自述。",
                  "> `已证实` = 至少一对实现产生了结构分歧；分级见 `level` 列。", "",
@@ -682,7 +691,10 @@ def build_parser() -> argparse.ArgumentParser:
     w.set_defaults(func=_cmd_web)
 
     v = sub.add_parser("serve", help="起探针服务（供 socket / chain 方式接入真实产品）")
-    v.add_argument("--policy", default="ref-cl-first")
+    v.add_argument("--domain", default="http1-framing", choices=sorted(ADAPTERS),
+                   help="探针服务的领域（新增领域见 ced/adapters/__init__.py 的注册表）")
+    v.add_argument("--policy", default=None,
+                   help="参照实现策略名，默认取该领域第一个参照实现")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--data-port", type=int, default=8800)
     v.add_argument("--api-port", type=int, default=8801)

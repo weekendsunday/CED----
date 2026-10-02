@@ -23,6 +23,7 @@ from ..impls import host_reference
 from ..impls.host_norm import normalize_host
 from ..minimize.ddmin import ddmin
 from ..mutate import host_axes
+from .base import http_request_fields
 from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
@@ -104,6 +105,11 @@ class HostNormAdapter:
     def local_parser(self) -> tuple:
         """本地解析器：Host 归一化内核 + 归一化参照实现的策略表。"""
         return host_reference.policy_of, normalize_host
+
+    def extract(self, raw: bytes) -> bytes:
+        """能认出完整请求就取 Host 头的值；否则视作裸对象原样返回。"""
+        fields = http_request_fields(raw)
+        return fields[1] if fields is not None else raw
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(host_reference.AXIS_PAIRS)

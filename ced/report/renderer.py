@@ -12,6 +12,7 @@ import json
 
 from ..contracts import LEVEL_SECURITY
 from ..scenario import build_poc, build_pocs
+from .cluster import cluster, cluster_payload, redundancy
 
 #: repr 截断上限 —— 一条请求不该有 8KB 以上的可读表示；超了说明输入不是单条请求
 REPR_LIMIT = 8192
@@ -101,15 +102,35 @@ def render_markdown(result, *, domain: str = "http1-framing",
         out.append("")
         return "\n".join(out)
 
-    out.append("## 误差明细（按级别排序）")
+    clusters = cluster(result.findings)
+    out.append("## 同类归并")
     out.append("")
-    order = {LEVEL_SECURITY: 0, "unknown": 1, "compatibility": 2}
-    for f in sorted(result.findings, key=lambda x: order.get(x.verdict.level, 9)):
+    out.append("> 判据：**同一对实现 + 同一分歧类型 = 同一类事实**，只留一条代表。")
+    out.append(f"> {len(result.findings)} 条发现归并后是 **{len(clusters)} 类**"
+               f"（冗余 **{len(result.findings) / len(clusters):.1f}×**）。"
+               f"完整清单仍在 JSON 与结果库里。")
+    out.append("")
+    out.append("| 级别 | 链路 | 类型 | 条数 | 代表 |")
+    out.append("|---|---|---|---|---|")
+    for item in clusters:
+        out.append(f"| {item.level} | {item.left} ↔ {item.right} | `{item.kind}` | "
+                   f"{item.count} | `{item.case_id}` |")
+    out.append("")
+
+    out.append("## 误差明细（每类一条代表）")
+    out.append("")
+    for item in clusters:
+        f = item.representative
         v = f.verdict
-        out.append(f"### [{v.level}] `{f.case_id}` — {v.kind}")
+        out.append(f"### [{v.level}] `{f.case_id}` — {v.kind}"
+                   + (f"　（同类共 {item.count} 条）" if item.count > 1 else ""))
         out.append("")
         out.append(f"- 对照：**{f.divergence.left.impl_id}** ↔ "
                    f"**{f.divergence.right.impl_id}**（轴：`{f.divergence.axis}`）")
+        if item.count > 1:
+            others = "、".join(f"`{cid}`" for cid in item.case_ids[1:6])
+            more = f"…等 {item.count - 1} 条" if item.count > 6 else ""
+            out.append(f"- 同类其它样本：{others}{more}")
         out.append(f"- 判定理由：{v.reason}")
         if v.ablation:
             out.append(f"- 可控性证据：{v.ablation}")
@@ -209,6 +230,8 @@ def result_payload(result) -> dict:
         "compare_keys": list(keys),
         "rejected_cases": getattr(result, "rejected_cases", 0),
         "summary": summary_of(result),
+        "redundancy": redundancy(result.findings),
+        "clusters": cluster_payload(result.findings),
         "pocs": [poc.to_dict() for poc in build_pocs(result)],
         "findings": findings,
     }

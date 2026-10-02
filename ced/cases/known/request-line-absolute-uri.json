@@ -1,0 +1,13 @@
+{
+  "id": "request-line-absolute-uri",
+  "axis": "request_line",
+  "left": "ref-cl-first",
+  "right": "ref-loose-request-line",
+  "expect_kind": "framing_boundary",
+  "expect_fields": [
+    "consumed"
+  ],
+  "payload_b64": "UE9TVCBodHRwOi8vbG9jYWxob3N0LyBIVFRQLzEuMQ0KSG9zdDogbG9jYWxob3N0DQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
+  "reference": "RFC 9112 §3.2.2（absolute-form 请求目标）",
+  "note": "请求行用绝对形式 «POST http://localhost/ HTTP/1.1»：严格实现判为非法请求行、不消费任何字节（consumed=0）；宽松实现接受并继续按 CL 定帧、消费整条 74 字节。同一段字节在两侧的『请求到哪里结束』判断完全不同 —— 这是上游放行、下游拒绝（或反之）的解析不一致前提。该案例覆盖 request_line 轴，此前 8 个案例未覆盖。"
+}

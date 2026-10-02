@@ -75,6 +75,36 @@
   .split{display:grid;grid-template-columns:320px 1fr;gap:18px}
   .ok{color:var(--good)} .no{color:var(--bad)}
   .checkitem{padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .progress{height:10px;background:#eceff3;border-radius:6px;overflow:hidden;margin-top:12px}
+  .progress .bar{height:100%;background:var(--accent);width:0;transition:width .2s}
+  .log{max-height:190px;overflow:auto;background:#f2f4f7;border:1px solid var(--line);
+       border-radius:8px;padding:8px 12px;font:12px/1.55 Consolas,Menlo,monospace}
+  .log .l{white-space:pre-wrap;word-break:break-all}
+  .evlist{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px;
+          margin-top:10px}
+  .evitem{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .evitem:hover{background:#f2f6ff}
+  .evitem.sel{background:#eaf1ff}
+  .evitem .id{font-weight:600;font-size:13px}
+  .evitem .meta{color:var(--dim);font-size:12px}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover{background:#f2f6ff}
+  .sect{margin-top:14px}
+  .boundary{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.5px;
+            color:var(--good);background:#e9f6ee;border:1px solid #c4e6d2;
+            border-radius:20px;padding:1px 10px;margin:2px 0 6px}
+  .clue{background:#eef0f3;border:1px solid var(--line);border-radius:8px;
+        padding:12px 14px;color:var(--dim);font-size:12.5px;line-height:1.6}
+  .statcards{display:flex;gap:14px;flex-wrap:wrap}
+  .statcard{background:var(--card);border:1px solid var(--line);border-radius:10px;
+            padding:12px 18px;min-width:118px}
+  .statcard .v{font-size:22px;font-weight:700;line-height:1.3}
+  .statcard .k{color:var(--dim);font-size:12px}
+  .heat{border-collapse:collapse;font-size:12.5px;width:auto;margin:0}
+  .heat th,.heat td{border:1px solid var(--line);padding:6px 10px;text-align:center}
+  .heat th{background:#fbfcfd;color:var(--dim);font-size:12px;font-weight:600}
+  .heat td{font-variant-numeric:tabular-nums}
+  .heat td.diag{background:var(--bg);color:#c3c9d2}
 </style>
 </head>
 <body>
@@ -85,14 +115,121 @@
 </header>
 
 <nav class="tabs">
-  <button class="tab active" data-tab="probe">探测文件</button>
+  <button class="tab active" data-tab="scan">扫描</button>
+  <button class="tab" data-tab="ledger">提案台账</button>
+  <button class="tab" data-tab="probe">探测文件</button>
   <button class="tab" data-tab="cases">内置案例</button>
   <button class="tab" data-tab="check">自检</button>
 </nav>
 
 <main>
+  <!-- ============ 扫描 ============ -->
+  <section class="panel active" id="tab-scan">
+    <div class="card">
+      <div class="row" style="margin-top:0">
+        <label>模式</label>
+        <select id="scan-mode">
+          <option value="axis">axis（单轴扫描）</option>
+          <option value="cross">cross（交叉扫描）</option>
+        </select>
+        <label>用例上限</label>
+        <input type="text" id="scan-limit" value="60" style="min-width:88px">
+        <label>随机种子</label>
+        <input type="text" id="scan-seed" value="42" style="min-width:88px">
+        <label style="display:inline-flex;align-items:center;gap:6px">
+          <input type="checkbox" id="scan-llm" style="min-width:0"> 使用模型提案
+        </label>
+      </div>
+      <div class="row">
+        <label>拓扑文件（可选）</label>
+        <input type="text" id="scan-topology" placeholder="留空 = 用内置实现" style="min-width:280px">
+      </div>
+      <div class="row">
+        <button class="primary" id="scan-go">开始扫描</button>
+        <button class="ghost" id="scan-abort" disabled>中止</button>
+        <span class="note" id="scan-hint">—</span>
+      </div>
+      <div id="scan-err" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="summary" style="margin-bottom:0;border:0;padding:0">
+        <span><span class="k">阶段</span><b id="scan-stage">—</b></span>
+        <span><span class="k">用例</span><b id="scan-cases">0</b></span>
+        <span><span class="k">分歧</span><b class="bad" id="scan-div">0</b></span>
+        <span><span class="k">安全级</span><b class="bad" id="scan-sec">0</b></span>
+        <span><span class="k">已用时</span><b id="scan-elapsed">0.0</b> 秒</span>
+      </div>
+      <div class="progress"><div class="bar" id="scan-bar"></div></div>
+      <div class="note" id="scan-prog">0 / 0 组用例</div>
+      <div class="sect"><div class="note"><b>事件日志</b>（最多保留 200 行）</div>
+        <div class="log" id="scan-log"></div></div>
+    </div>
+
+    <div class="card">
+      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
+        历史扫描任务（<span id="jobs-count">0</span>）</div>
+      <div id="scan-jobs"><div class="note">加载中…</div></div>
+    </div>
+
+    <div class="card">
+      <div class="split">
+        <div>
+          <div class="row" style="margin-top:0">
+            <select id="scan-filter">
+              <option value="all">全部</option>
+              <option value="security">仅安全级</option>
+            </select>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="scan-search" placeholder="按 case_id / 实现 / kind 过滤"
+                   style="min-width:220px;width:100%">
+          </div>
+          <div class="note" id="scan-count">0 条 / 共 0 条</div>
+          <div class="evlist" id="scan-evlist"></div>
+        </div>
+        <div id="scan-evidence" class="note">← 左边点一条发现</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">扫描指标</div>
+      <div class="statcards" id="scan-metrics">
+        <div class="note">跑完一次扫描后显示</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">交叉矩阵热力图</div>
+      <div id="scan-heatmap" style="overflow:auto"><div class="note">跑完一次扫描后显示</div></div>
+    </div>
+  </section>
+
+  <!-- ============ 提案台账 ============ -->
+  <section class="panel" id="tab-ledger">
+    <div class="card">
+      <div id="ledger-status" class="note">模型状态检查中…</div>
+      <div class="row">
+        <button class="primary" id="propose-go" disabled>让模型提一批新提案</button>
+        <span class="note" id="propose-hint">—</span>
+      </div>
+      <div id="propose-err" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="statcards" id="ledger-stats"></div>
+      <div class="note">命中 = 提案通过了差分 oracle 的准入实验，不是模型自述</div>
+    </div>
+
+    <div class="card">
+      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
+        最近提案（<span id="ledger-count">0</span>）</div>
+      <div id="ledger-table"><div class="note">加载中…</div></div>
+    </div>
+  </section>
+
   <!-- ============ 探测文件 ============ -->
-  <section class="panel active" id="tab-probe">
+  <section class="panel" id="tab-probe">
     <div class="card">
       <div class="drop" id="drop">
         <div style="font-size:15px;margin-bottom:6px"><b>把请求文件拖到这里</b></div>
@@ -162,6 +299,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
   document.querySelectorAll('.panel').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + t.dataset.tab));
+  onTabShown(t.dataset.tab);
 });
 
 /* ---------- 选文件 ---------- */
@@ -207,7 +345,7 @@ fetch('/api/impls').then(r => r.json()).then(d => {
       `<option value="${x.id}" title="${esc(x.deviation)}">${x.id}</option>`).join('');
     el.selectedIndex = i === 0 ? 0 : Math.min(1, d.impls.length - 1);
   });
-});
+}).catch(() => {});
 
 /* ---------- 探测 ---------- */
 $('#go').onclick = async () => {
@@ -257,13 +395,19 @@ function renderProbe(d){
   out.innerHTML = h + divs.map(renderFinding).join('');
 }
 
-function renderFinding(r){
-  const keys = new Set(r.diff_keys);
-  const rows = Object.entries(r.observations).map(([k, v]) => {
+function obsTable(observations, diffKeys, leftLabel, rightLabel){
+  const keys = new Set(diffKeys || []);
+  const rows = Object.entries(observations || {}).map(([k, v]) => {
     const d = keys.has(k) ? ' class="diff"' : '';
-    return `<tr${d}><td>${esc(k)}</td><td>${esc(JSON.stringify(v[0]))}</td>` +
-           `<td>${esc(JSON.stringify(v[1]))}</td></tr>`;
+    const vals = Array.isArray(v) ? v : [v, ''];
+    return `<tr${d}><td>${esc(k)}</td><td>${esc(JSON.stringify(vals[0]))}</td>` +
+           `<td>${esc(JSON.stringify(vals[1]))}</td></tr>`;
   }).join('');
+  return `<table><tr><th>观测字段</th><th>${esc(leftLabel)}</th>` +
+         `<th>${esc(rightLabel)}</th></tr>${rows}</table>`;
+}
+
+function renderFinding(r){
   const mini = r.minimized_repr
     ? `<div class="kv"><span class="k">最小复现</span>${r.payload_len} → ${r.minimized_len} 字节</div>
        <pre>${esc(r.minimized_repr)}</pre>` : '';
@@ -272,7 +416,7 @@ function renderFinding(r){
     <h3>${esc(r.left)} ↔ ${esc(r.right)}
         <span class="badge ${esc(r.level)}">${esc(r.level)}</span>
         <span style="color:var(--dim);font-weight:400;font-size:12px">（${esc(r.kind)}）</span></h3>
-    <table><tr><th>观测字段</th><th>${esc(r.left)}</th><th>${esc(r.right)}</th></tr>${rows}</table>
+    ${obsTable(r.observations, r.diff_keys, r.left, r.right)}
     <div class="kv"><span class="k">判定理由</span>${esc(r.reason)}</div>
     ${r.ablation ? `<div class="kv"><span class="k">可控性证据</span>${esc(r.ablation)}</div>` : ''}
     ${r.cwe ? `<div class="kv"><span class="k">CWE</span>${esc(r.cwe)}
@@ -296,12 +440,17 @@ fetch('/api/cases').then(r => r.json()).then(d => {
       x.classList.toggle('sel', x === el));
     loadCase(el.dataset.id);
   });
-});
+}).catch(() => {});
 
 async function loadCase(id){
   const box = $('#casedetail');
   box.innerHTML = '加载中…';
-  const d = await (await fetch('/api/case?id=' + encodeURIComponent(id))).json();
+  let d;
+  try {
+    d = await (await fetch('/api/case?id=' + encodeURIComponent(id))).json();
+  } catch (err) {
+    return box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
   if (d.error) return box.innerHTML = '<div class="err">' + esc(d.error) + '</div>';
   const c = d.case, r = d.result;
   box.innerHTML = `
@@ -323,7 +472,14 @@ $('#runchk').onclick = async () => {
   const box = $('#checkresult');
   box.innerHTML = '跑中…';
   $('#runchk').disabled = true;
-  const d = await (await fetch('/api/regression', {method:'POST'})).json();
+  let d;
+  try {
+    d = await (await fetch('/api/regression', {method:'POST'})).json();
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    $('#runchk').disabled = false;
+    return;
+  }
   const ok = d.passed === d.total;
   box.innerHTML = `<div class="summary">
       <span><span class="k">结果</span>
@@ -333,6 +489,532 @@ $('#runchk').onclick = async () => {
         ${esc(i.name)}　<span style="color:var(--dim)">${esc(i.detail)}</span></div>`).join('');
   $('#runchk').disabled = false;
 };
+
+/* ================= 扫描控制台 ================= */
+const LEVEL_RANK = {security:0, unknown:1, compatibility:2};
+const LEVEL_LABEL = {security:'安全级', unknown:'待复核', compatibility:'兼容性'};
+const STATE_LABEL = {pending:'排队中', running:'运行中', done:'已完成',
+                     failed:'失败', aborted:'已中止'};
+function levelLabel(l){ return LEVEL_LABEL[l] || l || '未知'; }
+function stateLabel(s){ return STATE_LABEL[s] || s || '—'; }
+function numOr(el, dflt){
+  const v = parseInt(el.value, 10);
+  return isFinite(v) ? v : dflt;
+}
+function cmpFinding(a, b){
+  const la = LEVEL_RANK[a.level] == null ? 3 : LEVEL_RANK[a.level];
+  const lb = LEVEL_RANK[b.level] == null ? 3 : LEVEL_RANK[b.level];
+  if (la !== lb) return la - lb;
+  const ca = a.controllable ? 1 : 0, cb = b.controllable ? 1 : 0;
+  if (ca !== cb) return cb - ca;
+  return String(a.case_id).localeCompare(String(b.case_id));
+}
+
+let scanES = null, scanJobId = '', scanFindings = [], scanSel = null, scanPocs = {};
+
+function scanErr(msg){
+  const box = $('#scan-err');
+  if (box) box.innerHTML = '<div class="err">' + esc(msg) + '</div>';
+}
+function scanLog(text, kind){
+  const box = $('#scan-log');
+  if (!box) return;
+  const line = document.createElement('div');
+  line.className = 'l' + (kind === true ? ' ok' : kind === false ? ' no' : '');
+  line.textContent = text;
+  box.appendChild(line);
+  while (box.childElementCount > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+function closeScanES(){
+  if (scanES){ scanES.close(); scanES = null; }
+}
+function setScanProgress(p){
+  const done = p.done == null ? 0 : p.done;
+  const total = p.total == null ? 0 : p.total;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  $('#scan-bar').style.width = pct + '%';
+  $('#scan-prog').textContent = done + ' / ' + total + ' 组用例';
+  if (p.cases != null) $('#scan-cases').textContent = p.cases;
+  if (p.divergences != null) $('#scan-div').textContent = p.divergences;
+  if (p.security != null) $('#scan-sec').textContent = p.security;
+  if (p.elapsed != null) $('#scan-elapsed').textContent = Number(p.elapsed).toFixed(1);
+}
+
+function handleScanEvent(d){
+  if (d.type === 'stage'){
+    $('#scan-stage').textContent = d.stage + (d.detail ? ' — ' + d.detail : '');
+    scanLog('[' + d.stage + '] ' + (d.detail || ''));
+  } else if (d.type === 'proposals'){
+    scanLog('提案：通过准入 ' + d.accepted + ' 条 / 丢弃 ' + d.rejected + ' 条');
+    (d.items || []).forEach(it => {
+      scanLog('　· ' + it.axis + '　' + (it.admitted ? '命中' : '未命中') +
+              (it.note ? '　— ' + it.note : ''), it.admitted);
+    });
+  } else if (d.type === 'progress'){
+    setScanProgress(d);
+  } else if (d.type === 'done'){
+    closeScanES();
+    $('#scan-stage').textContent = '结束：' + stateLabel(d.state);
+    $('#scan-abort').disabled = true;
+    $('#scan-go').disabled = false;
+    $('#scan-hint').textContent = '任务 ' + scanJobId + ' ' + stateLabel(d.state);
+    scanLog('任务结束：' + stateLabel(d.state));
+    loadScanResult(scanJobId);
+    loadScanJobs();
+  } else if (d.type === 'error'){
+    closeScanES();
+    scanLog('错误：' + d.text, false);
+    scanErr(d.text);
+    $('#scan-abort').disabled = true;
+    $('#scan-go').disabled = false;
+  }
+}
+
+function subscribeScan(jobId){
+  closeScanES();
+  const es = new EventSource('/api/scan/events?job_id=' + encodeURIComponent(jobId));
+  scanES = es;
+  es.onmessage = ev => {
+    let d;
+    try { d = JSON.parse(ev.data); } catch (e) { return; }
+    handleScanEvent(d);
+  };
+  es.onerror = () => {
+    if (scanES === es && es.readyState === 2){
+      scanLog('事件流已断开', false);
+    }
+  };
+}
+
+$('#scan-go').onclick = async () => {
+  if (scanES) return;
+  $('#scan-err').innerHTML = '';
+  $('#scan-go').disabled = true;
+  const body = {
+    domain: 'http1-framing',
+    mode: $('#scan-mode').value,
+    limit: numOr($('#scan-limit'), 60),
+    seed: numOr($('#scan-seed'), 42),
+    use_llm: $('#scan-llm').checked,
+    topology: $('#scan-topology').value.trim()
+  };
+  try {
+    const res = await fetch('/api/scan/start', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (d.error){
+      scanErr(d.error);
+      $('#scan-go').disabled = false;
+      return;
+    }
+    scanJobId = d.job_id;
+    scanFindings = []; scanSel = null; scanPocs = {};
+    $('#scan-bar').style.width = '0%';
+    $('#scan-prog').textContent = '0 / 0 组用例';
+    $('#scan-log').innerHTML = '';
+    $('#scan-hint').textContent = '任务 ' + d.job_id + ' 运行中';
+    $('#scan-abort').disabled = false;
+    scanLog('已启动任务 ' + d.job_id);
+    subscribeScan(d.job_id);
+  } catch (err) {
+    scanErr('请求失败：' + err);
+    $('#scan-go').disabled = false;
+  }
+};
+
+$('#scan-abort').onclick = async () => {
+  if (!scanJobId) return;
+  $('#scan-abort').disabled = true;
+  try {
+    const res = await fetch('/api/scan/abort', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({job_id: scanJobId})
+    });
+    const d = await res.json();
+    scanLog(d.ok ? '已发送中止请求' : ('中止失败：' + (d.error || '')), d.ok);
+  } catch (err) {
+    scanLog('中止请求失败：' + err, false);
+  }
+};
+
+async function loadScanJobs(){
+  const box = $('#scan-jobs');
+  box.innerHTML = '<div class="note">加载中…</div>';
+  try {
+    const res = await fetch('/api/scan/jobs');
+    const d = await res.json();
+    if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    const jobs = d.jobs || [];
+    $('#jobs-count').textContent = jobs.length;
+    if (!jobs.length){ box.innerHTML = '<div class="note">还没有扫描任务</div>'; return; }
+    box.innerHTML = '<table><tr><th>任务号</th><th>状态</th><th>用例</th>' +
+      '<th>分歧</th><th>安全级</th><th></th></tr>' + jobs.map(j => {
+        const c = j.live ? ' class="clickable"' : '';
+        const n = v => v == null ? '—' : v;
+        return `<tr${c} data-id="${esc(j.job_id)}">
+          <td>${esc(j.job_id)}</td>
+          <td>${esc(stateLabel(j.state))}</td>
+          <td>${n(j.total_cases)}</td>
+          <td>${n(j.n_divergence)}</td>
+          <td>${n(j.n_security)}</td>
+          <td class="note">${j.live ? '' : '结果已不在内存'}</td></tr>`;
+      }).join('') + '</table>';
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => {
+      $('#scan-hint').textContent = '载入任务 ' + tr.dataset.id;
+      loadScanResult(tr.dataset.id);
+    });
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+}
+
+async function loadScanResult(jobId){
+  if (!jobId) return;
+  const box = $('#scan-evidence');
+  box.className = 'note';
+  box.innerHTML = '加载结果…';
+  try {
+    const res = await fetch('/api/scan/result?job_id=' + encodeURIComponent(jobId));
+    const d = await res.json();
+    if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    const r = d.result || {};
+    scanFindings = (r.findings || []).slice().sort(cmpFinding);
+    scanSel = null;
+    scanPocs = {};
+    (r.pocs || []).forEach(p => { scanPocs[p.case_id] = p; });
+    renderScanEvList();
+    renderScanEvidence(null);
+    loadScanMetrics(jobId);
+    loadScanHeatmap(jobId);
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+}
+
+/* ---------- 指标卡片 ---------- */
+function metricCard(label, value, hint){
+  return `<div class="statcard" title="${esc(hint)}">
+    <div class="v">${value}</div><div class="k">${esc(label)}</div></div>`;
+}
+function metricPct(v){
+  return (v == null || isNaN(v)) ? '—' : (Number(v) * 100).toFixed(1) + '%';
+}
+async function loadScanMetrics(jobId){
+  const box = $('#scan-metrics');
+  if (!box) return;
+  box.innerHTML = '<div class="note">加载中…</div>';
+  try {
+    const res = await fetch('/api/scan/metrics?job_id=' + encodeURIComponent(jobId));
+    const d = await res.json();
+    if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    const m = d.metrics || {};
+    const iv = v => esc(String(v == null ? 0 : v));
+    const avg = m.avg_seconds_per_case == null
+      ? '—' : esc(String(m.avg_seconds_per_case)) + ' 秒';
+    box.innerHTML =
+      metricCard('用例数', iv(m.total_cases), '本次扫描真正喂进去的候选语料条数（含去重后的提案，不含被 limit 裁掉的）') +
+      metricCard('实现对', iv(m.jobs), '本次扫描实际比对的实现组合数（axis 模式下 = 定向轴 + 未覆盖实现的交叉对照）') +
+      metricCard('分歧数', iv(m.divergences), '同一份字节两侧结构理解不一致的条数（判定前的原始差分）') +
+      metricCard('安全级', iv(m.security), '分歧中由攻击者可控字节承载、可升级为实际漏洞的条数') +
+      metricCard('安全占比', metricPct(m.security_share), '安全级 / 分歧数 —— 衡量分歧里有多大比例真的危险') +
+      metricCard('可控性证据率', metricPct(m.controllable_rate), '安全级发现里通过消融实验、证明攻击者可控的比例') +
+      metricCard('唯一化压缩比', metricPct(m.unique_case_ratio), '唯一 case_id 数 / 分歧数 —— 越低说明同一份字节被反复计入，有效发现越少') +
+      metricCard('最小化压缩比', metricPct(m.minimize_ratio), 'Σ最小化后字节数 / Σ原始字节数（只算被最小化的发现）—— 越低代表性越好') +
+      metricCard('单用例平均耗时', avg, '已用时 / 用例数 —— 扫描吞吐；没有用例时不显示');
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+}
+
+/* ---------- 交叉矩阵热力图 ---------- */
+const HEAT_RGB = {security:[217,59,59], unknown:[200,129,26], compatibility:[107,116,128]};
+
+function heatCellStyle(cell, max){
+  const n = cell.count || 0;
+  if (!n) return 'background:#fff';
+  const rgb = HEAT_RGB[cell.level] || HEAT_RGB.compatibility;
+  const t = max > 0 ? Math.min(1, n / max) : 1;
+  return `background:rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(0.14 + 0.6 * t).toFixed(3)})`;
+}
+function renderHeatmap(d){
+  const impls = d.impls || [], cells = d.cells || [], max = d.max || 1;
+  let h = '<table class="heat"><tr><th>左 \\ 右</th>' +
+    impls.map(x => `<th>${esc(x)}</th>`).join('') + '</tr>';
+  impls.forEach((rowName, i) => {
+    h += `<tr><th>${esc(rowName)}</th>`;
+    impls.forEach((colName, j) => {
+      const c = ((cells[i] || [])[j]) || {count:0};
+      const ids = (c.case_ids || []).join('、');
+      const title = c.count
+        ? [c.kind || '未分类', ids].filter(Boolean).join('：')
+        : '无分歧';
+      const cls = (c.count || c.level) ? '' : ' class="diag"';
+      h += `<td${cls} style="${heatCellStyle(c, max)}" title="${esc(title)}">` +
+           `${esc(String(c.count || 0))}</td>`;
+    });
+    h += '</tr>';
+  });
+  h += '</table><div class="note">读法：格子越深，这对实现在同一份字节上的结构分歧越多；' +
+       '红=安全级（可衍生请求走私）。对角线为空。</div>';
+  return h;
+}
+async function loadScanHeatmap(jobId){
+  const box = $('#scan-heatmap');
+  if (!box) return;
+  box.innerHTML = '<div class="note">加载中…</div>';
+  try {
+    const res = await fetch('/api/scan/heatmap?job_id=' + encodeURIComponent(jobId));
+    const d = await res.json();
+    if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    box.innerHTML = renderHeatmap(d);
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+}
+
+function filteredFindings(){
+  const filt = $('#scan-filter').value;
+  const q = $('#scan-search').value.trim().toLowerCase();
+  return scanFindings.filter(f => {
+    if (filt === 'security' && f.level !== 'security') return false;
+    if (!q) return true;
+    const hay = [f.case_id, f.left, f.right, f.kind, f.axis]
+      .map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+    return hay.indexOf(q) >= 0;
+  });
+}
+
+function renderScanEvList(){
+  const items = filteredFindings();
+  $('#scan-count').textContent = items.length + ' 条 / 共 ' + scanFindings.length + ' 条';
+  const box = $('#scan-evlist');
+  if (!items.length){
+    box.innerHTML = '<div class="note" style="padding:12px">没有匹配的发现</div>';
+    return;
+  }
+  box.innerHTML = items.map(f => {
+    const i = scanFindings.indexOf(f);
+    const sel = scanSel && scanSel.case_id === f.case_id ? ' sel' : '';
+    return `<div class="evitem${sel}" data-i="${i}">
+      <div class="id">${esc(f.case_id)}
+        <span class="badge ${esc(f.level)}">${esc(levelLabel(f.level))}</span></div>
+      <div class="meta">${esc(f.axis)}　${esc(f.left)} ↔ ${esc(f.right)}</div>
+      <div class="meta">${esc(f.kind)}${f.controllable ? '　<span class="bad">可控</span>' : ''}</div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.evitem').forEach(el => el.onclick = () => {
+    scanSel = scanFindings[parseInt(el.dataset.i, 10)];
+    renderScanEvList();
+    renderScanEvidence(scanSel);
+  });
+}
+
+function renderScanEvidence(f){
+  const box = $('#scan-evidence');
+  if (!f){
+    box.className = 'note';
+    box.innerHTML = '← 左边点一条发现';
+    return;
+  }
+  box.className = '';
+  const diffKeys = Object.keys(f.diffs || {});
+  const obs = (f.observations && Object.keys(f.observations).length) ? f.observations : (f.diffs || {});
+  let h = `<div class="finding ${f.level === 'security' ? '' : 'unknown'}">
+    <h3>${esc(f.case_id)}
+      <span class="badge ${esc(f.level)}">${esc(levelLabel(f.level))}</span>
+      <span style="color:var(--dim);font-weight:400;font-size:12px">（${esc(f.kind)}）</span></h3>
+    <div class="kv"><span class="k">对照</span>${esc(f.left)} ↔ ${esc(f.right)}
+      　<span class="k">分歧轴</span>${esc(f.axis)}</div>
+    <div class="kv"><span class="k">可控</span>${f.controllable
+      ? '<span class="bad">是（攻击者可直接发送）</span>' : '否'}</div>
+    <div class="boundary">已证实 · 内核产出</div>`;
+
+  /* 双侧观测表 */
+  h += `<div class="sect"><div class="note"><b>双侧观测</b></div>`;
+  h += obsTable(obs, diffKeys, f.left, f.right);
+  h += `</div>`;
+
+  /* 消融证据 */
+  h += `<div class="sect"><div class="note"><b>消融证据</b></div>`;
+  h += f.ablation
+    ? `<div class="kv">${esc(f.ablation)}</div>
+       <div class="note">→ 该分歧由攻击者可直接发送的字节承载</div>`
+    : `<div class="kv warn">未知（未定位到可控承载）</div>`;
+  h += `</div>`;
+
+  /* 判定 */
+  h += `<div class="sect"><div class="note"><b>判定</b></div>
+    <div class="kv"><span class="k">判定理由</span>${esc(f.reason)}</div>
+    <div class="kv"><span class="k">安全后果</span>${esc(f.effect)}</div>
+    <div class="kv"><span class="k">CWE</span>${esc(f.cwe || '—')}</div>
+    <div class="kv"><span class="k">场景</span>${esc(f.scenario || '—')}</div>
+    <div class="kv"><span class="k">修复建议</span>${esc(f.fix)}</div>
+  </div>`;
+
+  /* 最小复现样本 */
+  h += `<div class="sect"><div class="note"><b>最小复现样本</b></div>`;
+  if (f.minimized_repr){
+    h += `<div class="kv">${f.original_len} → ${f.minimized_len} 字节</div>
+      <pre>${esc(f.minimized_repr)}</pre>`;
+  } else {
+    h += `<div class="kv">${f.original_len} 字节　<span class="note">未最小化</span></div>
+      <pre>${esc(f.payload_repr)}</pre>`;
+  }
+  h += `</div>`;
+
+  /* 链式复现 */
+  h += `<div class="sect"><div class="note"><b>链式复现</b></div>
+    <div class="kv">${f.chain_evidence ? esc(f.chain_evidence) : '—'}</div></div>`;
+
+  /* 攻击场景与端到端 PoC —— 属"已证实"栏：字节归属由链式模型算出，不是模型说的 */
+  const poc = scanPocs[f.case_id];
+  if (poc){
+    h += `<div class="sect"><div class="note"><b>攻击场景与复现步骤</b></div>
+      <div class="kv"><b>${esc(poc.title)}</b>　<span class="note">${esc(poc.scenario)}　CWE ${esc(poc.cwe || '—')}</span></div>`;
+    if (poc.forwarded === null || poc.forwarded === undefined){
+      h += `<div class="kv warn">字节归属无法量化（两侧含非本地实现）—— 需在真实拓扑上复现</div>`;
+    } else {
+      h += `<div class="kv"><span class="k">字节归属</span>前置转发 <b>${poc.forwarded}</b> /
+        后端消费 <b>${poc.back_consumed}</b> / 被夹带 <b class="bad">${poc.smuggled_len}</b> 字节</div>`;
+    }
+    h += `<div class="kv"><span class="k">影响</span>${esc(poc.impact)}</div>`;
+    h += `<ol style="margin:8px 0 0 18px;padding:0">` +
+         (poc.steps || []).map(s => `<li>${esc(s)}</li>`).join('') + `</ol>`;
+    h += `<div class="kv"><span class="k">脚本</span><code>${esc(poc.file_name)}</code>
+      <span class="note">（已写入结果目录；离线算字节账，加 --send HOST:PORT --i-am-authorized 可真发）</span></div>`;
+    h += `<details><summary class="note">展开可执行 PoC 脚本</summary>
+      <pre>${esc(poc.script || '')}</pre></details>`;
+    h += `</div>`;
+  }
+
+  /* 模型线索（未验证） */
+  h += `<div class="sect"><div class="note"><b>模型线索（未验证）</b></div>
+    <div class="clue">本栏内容由大模型生成，<b>未经验证</b>，仅供参考；
+      能否成立以本页其它栏位的确定性证据为准。</div></div>`;
+
+  h += `</div>`;
+  box.innerHTML = h;
+}
+
+/* ================= 提案台账 ================= */
+let assistAvailable = false;
+
+async function loadAssistStatus(){
+  const box = $('#ledger-status');
+  try {
+    const res = await fetch('/api/assist/status');
+    const d = await res.json();
+    assistAvailable = !!d.available;
+    $('#propose-go').disabled = !assistAvailable;
+    box.innerHTML = assistAvailable
+      ? '模型已配置：<b>' + esc(d.model || '—') + '</b>　' + esc(d.base_url || '')
+      : '<span class="warn">模型未配置：' + esc(d.reason || '—') + '</span>';
+    $('#propose-hint').innerHTML = assistAvailable
+      ? '—' : '<span class="warn">' + esc(d.reason || '模型未配置') + '</span>';
+  } catch (err) {
+    assistAvailable = false;
+    $('#propose-go').disabled = true;
+    box.innerHTML = '<span class="warn">模型状态检查失败：' + esc(err) + '</span>';
+  }
+}
+
+function pctText(v){
+  return (v == null || isNaN(v)) ? '—' : Math.round(Number(v) * 100) + '%';
+}
+function countText(v){ return v == null ? '0' : v; }
+function originCard(label, o){
+  o = o || {};
+  return `<div class="statcard"><div class="k">${esc(label)}</div>
+    <div class="v">${countText(o.proposed)}<span style="font-size:12px;color:var(--dim)"> 提案</span></div>
+    <div class="k">命中 ${countText(o.admitted)}　命中率 ${pctText(o.hit_rate)}</div></div>`;
+}
+function renderLedgerStats(stats){
+  const s = stats || {};
+  $('#ledger-stats').innerHTML =
+    `<div class="statcard"><div class="v">${countText(s.proposed)}</div><div class="k">提案数</div></div>
+     <div class="statcard"><div class="v">${countText(s.compiled)}</div><div class="k">可编译</div></div>
+     <div class="statcard"><div class="v">${countText(s.admitted)}</div><div class="k">命中</div></div>
+     <div class="statcard"><div class="v">${pctText(s.hit_rate)}</div><div class="k">命中率</div></div>` +
+    originCard('模型（llm）', (s.by_origin || {}).llm) +
+    originCard('手写（handwritten）', (s.by_origin || {}).handwritten);
+}
+
+async function loadLedger(){
+  const box = $('#ledger-table');
+  box.innerHTML = '<div class="note">加载中…</div>';
+  try {
+    const res = await fetch('/api/assist/ledger');
+    const d = await res.json();
+    if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+    renderLedgerStats(d.stats);
+    const rec = d.recent || [];
+    $('#ledger-count').textContent = rec.length;
+    if (!rec.length){ box.innerHTML = '<div class="note">还没有提案记录</div>'; return; }
+    box.innerHTML = '<table><tr><th>轴名</th><th>来源</th><th>可编译</th>' +
+      '<th>命中</th><th>命中字段</th><th>说明</th></tr>' + rec.map((it, i) => {
+        const origin = it.origin === 'llm' ? '模型'
+          : it.origin === 'handwritten' ? '手写' : (it.origin || '—');
+        const fields = (it.fields && it.fields.length) ? it.fields.join('、') : '—';
+        const note = it.note ? String(it.note).slice(0, 80) : '—';
+        const full = [it.note, it.rationale].filter(Boolean).join('\n\n');
+        return `<tr class="clickable" data-i="${i}">
+          <td>${esc(it.axis || '—')}</td>
+          <td>${esc(origin)}</td>
+          <td>${it.compiled ? '<span class="ok">可编译</span>' : '<span class="note">不可编译</span>'}</td>
+          <td>${it.admitted ? '<span class="ok">命中</span>' : '<span class="no">未命中</span>'}</td>
+          <td>${esc(fields)}</td>
+          <td title="${esc(full)}">${esc(note)}</td></tr>
+        <tr class="prop-detail" data-i="${i}" style="display:none">
+          <td colspan="6"><pre>${esc(it.payload_repr || '')}</pre></td></tr>`;
+      }).join('') + '</table>';
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => {
+      const det = box.querySelector('tr.prop-detail[data-i="' + tr.dataset.i + '"]');
+      if (det) det.style.display = det.style.display === 'none' ? '' : 'none';
+    });
+  } catch (err) {
+    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+}
+
+$('#propose-go').onclick = async () => {
+  const btn = $('#propose-go');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+  $('#propose-err').innerHTML = '';
+  $('#propose-hint').textContent = '—';
+  try {
+    const res = await fetch('/api/assist/propose', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({n: 8})
+    });
+    const d = await res.json();
+    if (d.error){
+      $('#propose-err').innerHTML = '<div class="err">' + esc(d.error) + '</div>';
+    } else {
+      const items = d.items || [];
+      const acc = items.filter(x => x.admitted).length;
+      $('#propose-hint').innerHTML = '本批 <b class="ok">' + acc + '</b> 条通过准入 / ' +
+        '<b class="no">' + (items.length - acc) + '</b> 条被丢弃';
+      if (d.stats) renderLedgerStats(d.stats);
+      await loadLedger();
+    }
+  } catch (err) {
+    $('#propose-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+  btn.textContent = label;
+  btn.disabled = !assistAvailable;
+};
+
+/* ================= 标签页钩子 ================= */
+function onTabShown(name){
+  if (name === 'scan') loadScanJobs();
+  else if (name === 'ledger'){ loadAssistStatus(); loadLedger(); }
+}
+onTabShown('scan');
 </script>
 </body>
 </html>

@@ -20,10 +20,13 @@ import time
 import urllib.request
 
 from ..contracts import Observation
-from .errors import ProbeUnreachable
+from .errors import ProbeRejected, ProbeUnreachable
 
 SEND_TIMEOUT = 10.0     # 发字节 + 读响应的超时
-VIEW_WAIT = 3.0         # 等探针记录视角的超时
+VIEW_WAIT = 3.0         # 等探针记录视角的超时（前置没回响应时用）
+#: 前置已经回了响应、但探针还没有视角 —— 只给这么久的宽限就判定"它没转发"。
+#: 转发型前置必须先拿到后端响应才能回复客户端，所以视角必然先于响应出现。
+REJECT_GRACE = 1.0
 
 
 def _parse_addr(addr: str) -> tuple[str, int]:
@@ -93,11 +96,16 @@ class ChainEvaluator:
                 f"{self.api[0]}:{self.api[1]} 不可达：{exc}") from exc
 
         try:
-            _send_raw(self.front, payload)
+            response = _send_raw(self.front, payload)
         except OSError as exc:
             raise ProbeUnreachable(f"前置 {self.label} 不可达：{exc}") from exc
 
-        deadline = time.time() + VIEW_WAIT
+        # 前置把字节转发给后端后，必须等后端响应才能回复客户端 —— 所以**响应到达时，
+        # 视角早已写好**。反过来，如果前置回了响应却没有视角，它一定是没转发。
+        # 据此把"被拒绝"的等待从 VIEW_WAIT 缩短到 REJECT_GRACE：
+        # 一轮扫描里被拒绝的用例可能占多数，白等 3 秒会把整轮扫描拖成分钟级。
+        budget = REJECT_GRACE if response else VIEW_WAIT
+        deadline = time.time() + budget
         while time.time() < deadline:
             for view in self.views():
                 # 零字节观测不可能对应一个非空请求 —— 它一定是端口探活之类的
@@ -109,8 +117,13 @@ class ChainEvaluator:
                                    ok=view.get("ok", True),
                                    error=view.get("error"),
                                    fields=view.get("fields", {}))
-            time.sleep(0.05)
+            time.sleep(0.02)
 
+        if response:
+            raise ProbeRejected(
+                f"前置 {self.label} 收到 {len(payload)} 字节，"
+                f"但未向后端转发任何字节（回了 {len(response)} 字节响应）"
+                f"—— 按自身策略拒绝了这条请求，本条不可观测")
         raise ProbeUnreachable(
-            f"前置 {self.label} 没有把任何字节转发到探针（被拒绝，或链路没起来）"
-            f"—— 拒绝合成视角，避免把探测失败当成耦合误差")
+            f"前置 {self.label} 没有把任何字节转发到探针，也没有回响应"
+            f"（被拒绝，或链路没起来）—— 拒绝合成视角，避免把探测失败当成耦合误差")

@@ -6,7 +6,7 @@
   * 透明前置        → 0 分歧（差分的差分，证明无自噪声/假阳性）
   * 会改写的前置    → 检出边界分歧（证明链路差分真的能工作）
   * 前置不可达      → **抛错**，绝不合成观测（防"探测失败 → 成片假阳性"）
-  * 前置收下不转发  → **抛错**，同样不得合成
+  * 前置收下不转发  → **跳过并计数**（不合成观测、也不中止；真实前置拒绝畸形请求属正常）
 """
 from __future__ import annotations
 
@@ -131,11 +131,17 @@ class TestChainE2E(unittest.TestCase):
         with self.assertRaises(ProbeUnreachable):
             scan(ADAPTER, evaluator, mode="cross", limit=6, do_minimize=False)
 
-    def test_front_that_forwards_nothing_raises(self):
-        """前置收下字节但不转发 → 同样必须抛错（这就是 F1 的回归守卫）。"""
+    def test_front_that_forwards_nothing_is_skipped_not_fabricated(self):
+        """前置收下字节但不转发 → **跳过并计数**。
+
+        真实前置（nginx / Envoy）对畸形请求返回 4xx 且不向后端转发，属正常行为；
+        若当链路故障处理，一轮扫描会在第一条畸形请求上崩掉，对真实产品完全不可用。
+        但跳过必须计数，且**绝不允许合成一个"看起来像观测"的后端视角**。
+        """
         evaluator = self._evaluator(self._start_front("drop"))
-        with self.assertRaises(ProbeUnreachable):
-            scan(ADAPTER, evaluator, mode="cross", limit=6, do_minimize=False)
+        result = scan(ADAPTER, evaluator, mode="cross", limit=6, do_minimize=False)
+        self.assertEqual(len(result.findings), 0, "不可观测的用例不许产出发现")
+        self.assertGreater(result.rejected_cases, 0, "跳过必须计数，不许静默")
 
     def test_probe_control_api_unreachable_raises(self):
         """前置活着但探针控制口不可达 → 报错必须指明是探针的问题。"""

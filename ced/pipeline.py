@@ -15,6 +15,7 @@ from .differ.comparator import compare, diff_keys
 from .impls import reference
 from .minimize.ddmin import minimize_headers
 from .orchestrate.chain import chain_evidence
+from .probe.errors import ProbeRejected
 
 
 def case_id_of(payload: bytes) -> str:
@@ -64,6 +65,14 @@ class ScanResult:
     jobs: int = 0
     divergences: list[Divergence] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    #: 参与判定的观测字段（供报告/前端渲染"双侧观测"表，避免各处重复定义）
+    compare_keys: tuple[str, ...] = ()
+    #: 真正进池的提案条数 —— 与内置语料重复的提案会被丢弃，所以它可能小于提案总数
+    proposed_cases: int = 0
+    #: 参与本次扫描的全部实现 id（热力图需要完整矩阵，而不只是出过分歧的对）
+    impl_ids: list[str] = field(default_factory=list)
+    #: 前置按自身策略拒绝、因而**不可观测**的用例数（跳过，不合成观测）
+    rejected_cases: int = 0
 
     @property
     def security(self) -> list[Finding]:
@@ -71,55 +80,87 @@ class ScanResult:
 
 
 def scan(adapter, evaluator, *, mode: str = "axis", limit: int | None = None,
-         seed: int = 42, do_minimize: bool = True) -> ScanResult:
+         seed: int = 42, do_minimize: bool = True, extra_cases=(),
+         on_progress=None) -> ScanResult:
+    """跑一次差分扫描。
+
+    ``extra_cases`` —— 追加的候选语料 ``(轴名, 字节)``，来自提案层（手写或模型）。
+    它们**原样入池、且不受 ``limit`` 约束**：limit 只裁剪手写语料的变异扩张，
+    否则提案会被扩张出来的几百条手写变体挤掉，LLM 模式等于没开。
+    与手写语料重合的提案直接丢弃，避免同一份字节带着两个轴名重复出发现。
+
+    ``on_progress(done, total, result)`` 每个实现对跑完时调用一次；第三个参数是
+    **活的** ScanResult —— 中断时调用方能拿到已完成的部分结果，而不是全丢。
+    """
     rng = random.Random(seed)
     impl_ids = list(evaluator.specs)
-    cases = adapter.expand(adapter.corpus(), rng)
+    handwritten = adapter.expand(adapter.corpus(), rng)
     if limit is not None:
-        cases = cases[:limit]
+        handwritten = handwritten[:limit]
+
+    seen = {payload for _, payload in handwritten}
+    proposed = [(axis, payload) for axis, payload in extra_cases
+                if payload not in seen]
+
     jobs = plan_jobs(adapter, impl_ids, mode)
+    result = ScanResult(total_cases=len(handwritten) + len(proposed),
+                        jobs=len(jobs),
+                        compare_keys=tuple(adapter.compare_keys),
+                        proposed_cases=len(proposed),
+                        impl_ids=list(impl_ids))
 
-    result = ScanResult(total_cases=len(cases), jobs=len(jobs))
-
-    for left_id, right_id, axis in jobs:
-        def keeps_divergence(payload: bytes) -> bool:      # 最小化用的谓词
-            lv = evaluator(left_id, payload)
-            rv = evaluator(right_id, payload)
-            return bool(diff_keys(lv, rv, adapter.compare_keys))
-
-        for _, payload in cases:
+    def run_case(left_id: str, right_id: str, axis: str, payload: bytes) -> None:
+        try:
             left = evaluator(left_id, payload)
             right = evaluator(right_id, payload)
-            div = compare(case_id_of(payload), axis, payload,
-                          left, right, adapter.compare_keys)
-            if div is None:
-                continue
-            result.divergences.append(div)
+        except ProbeRejected:
+            # 前置按自身策略拒绝了这条请求 → 后端视角不存在。
+            # 跳过并计数：既不中止整轮扫描，也绝不合成一个"看起来像观测"的结果。
+            result.rejected_cases += 1
+            return
+        div = compare(case_id_of(payload), axis, payload,
+                      left, right, adapter.compare_keys)
+        if div is None:
+            return
+        result.divergences.append(div)
 
-            kind = adapter.classify([d.key for d in div.diffs])
-            verdict = judge(div, kind, adapter, evaluator)
-            finding = Finding(divergence=div, verdict=verdict,
-                              original_len=len(payload))
+        kind = adapter.classify([d.key for d in div.diffs])
+        verdict = judge(div, kind, adapter, evaluator)
+        finding = Finding(divergence=div, verdict=verdict,
+                          original_len=len(payload))
 
-            if do_minimize and verdict.is_security:
-                minimized = minimize_headers(payload, keeps_divergence)
-                finding.minimized = minimized
-                finding.minimized_len = len(minimized)
+        if do_minimize and verdict.is_security:
+            def keeps_divergence(candidate: bytes) -> bool:      # 最小化用的谓词
+                lv = evaluator(left_id, candidate)
+                rv = evaluator(right_id, candidate)
+                return bool(diff_keys(lv, rv, adapter.compare_keys))
 
-            if verdict.is_security:
-                # 链式复现必须针对**这条发现自己的那一对**，而不是拓扑里固定的链路，
-                # 否则会出现"安全级发现"配着"两侧理解一致"的自相矛盾。
-                specs = evaluator.specs
-                fspec, bspec = specs.get(left_id), specs.get(right_id)
-                if (fspec is not None and bspec is not None
-                        and fspec.runner == "local" and bspec.runner == "local"):
-                    evidence = chain_evidence(
-                        finding.minimized or payload,
-                        reference.policy_of(fspec.policy or left_id),
-                        reference.policy_of(bspec.policy or right_id),
-                        left_id, right_id)
-                    finding.chain_evidence = evidence.describe()
+            minimized = minimize_headers(payload, keeps_divergence)
+            finding.minimized = minimized
+            finding.minimized_len = len(minimized)
 
-            result.findings.append(finding)
+        if verdict.is_security:
+            # 链式复现必须针对**这条发现自己的那一对**，而不是拓扑里固定的链路，
+            # 否则会出现"安全级发现"配着"两侧理解一致"的自相矛盾。
+            specs = evaluator.specs
+            fspec, bspec = specs.get(left_id), specs.get(right_id)
+            if (fspec is not None and bspec is not None
+                    and fspec.runner == "local" and bspec.runner == "local"):
+                evidence = chain_evidence(
+                    finding.minimized or payload,
+                    reference.policy_of(fspec.policy or left_id),
+                    reference.policy_of(bspec.policy or right_id),
+                    left_id, right_id)
+                finding.chain_evidence = evidence.describe()
+
+        result.findings.append(finding)
+
+    for done, (left_id, right_id, axis) in enumerate(jobs, start=1):
+        for _, payload in handwritten:
+            run_case(left_id, right_id, axis, payload)
+        for case_axis, payload in proposed:      # 归因落在提案自己的轴名上
+            run_case(left_id, right_id, case_axis, payload)
+        if on_progress is not None:
+            on_progress(done, len(jobs), result)
 
     return result

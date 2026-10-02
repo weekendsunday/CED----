@@ -8,8 +8,8 @@
 探针协议刻意避开"等空闲超时"：客户端发完即半关闭写端，服务端读到 EOF 立刻回复。
 """
 from .chain import ChainEvaluator
-from .errors import ProbeUnreachable
+from .errors import ProbeRejected, ProbeUnreachable
 from .evaluator import Evaluator, LocalEvaluator, SocketEvaluator
 
 __all__ = ["Evaluator", "LocalEvaluator", "SocketEvaluator", "ChainEvaluator",
-           "ProbeUnreachable"]
+           "ProbeRejected", "ProbeUnreachable"]

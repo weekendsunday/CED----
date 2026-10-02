@@ -51,6 +51,7 @@ python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 | 面板 | 用途 |
 |---|---|
 | **扫描控制台** | 起一个扫描任务 → 事件流实时看进度 → 结果按 `security / unknown / compatibility` 分级；点开任一条看**证据视图**（双侧观测、消融证据、最小复现样本、链路量化） |
+| **验证外部发现** | 把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当**待验证的假设**，用与扫描完全相同的链路证实或证伪 —— **做扫描器的裁判** |
 | **提案台账** | 模型提了多少条、通过准入实验几条、命中率多少；与手写轴**同一把尺子**对照 |
 | **探测文件** | 拖入一份请求文件 → 看它在各实现之间有没有耦合误差，给出判定与最小复现样本 |
 | **内置案例** | 18 个已知分歧类别（两个领域各 9），点开看原始字节、两侧观测、判定与证据 |
@@ -64,12 +65,13 @@ python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 
 | 指标 | 数字 |
 |---|---|
-| 领域 / 参照实现 | **2 个**：`http1-framing`（9 实现 · 8 对定向对照）· `url-norm`（10 实现 · 9 对定向对照） |
-| 内置语料扫描（分帧） | 60 用例 / 8 实现对 → 耦合误差 **24**，其中安全级 **22**（CWE-444，场景 desync） |
-| 内置语料扫描（路径） | 60 用例 / 9 实现对 → 耦合误差 **128**，其中安全级 **105**（CWE-22 / CWE-863，场景 authz） |
-| 已知案例反验证 | **18/18 通过**（两个领域各 9，期望值独立手写，来自 RFC / 公开先例） |
-| 自动化测试 | **121 项全绿**（引擎 17 / 探针协议 2 / 链路端到端 5 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9） |
-| 代码量 | 源码 57 文件 7686 行；测试 10 文件 2265 行 |
+| 领域 | **5 个**：`http1-framing` · `url-norm` · `host-norm` · `query-norm` · `enc-norm` |
+| 参照实现 / 定向对照 | 9+12+9+11+10 = **51 个参照实现**，8+11+8+10+10 = **47 对定向对照** |
+| 能指出的漏洞类别 | **6 类**：请求走私 · 鉴权绕过/路径穿越 · 虚拟主机绕过/缓存投毒 · 参数污染 · 过滤器绕过 |
+| 实测（每领域 40 用例） | 分帧 13/11 · 路径 82/68 · Host 90/83 · 查询串 100/96 · 编码 82/52（分歧 / 其中安全级） |
+| 已知案例反验证 | **47/47 通过**（期望值全部独立手写，来自 RFC / 公开先例，不是工具输出） |
+| 自动化测试 | **175 项全绿**（引擎 17 / 探针协议 2 / 链路端到端 5 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9 / Host 12 / 查询串 11 / 编码 11 / 验证层 20） |
+| 代码量 | 源码 74 文件 11708 行；测试 14 文件 3193 行 |
 | 第三方依赖 | **0** —— 连模型调用（`urllib`）与前端事件流（手写 SSE）都是标准库 |
 
 > 数字一律从代码里数出来再写（`python main.py --check`、`python -m ced impls`、
@@ -161,6 +163,27 @@ python -m ced poc 8b2611d2 --out results/pocs      # 摊开一条发现的 PoC
 python -m ced scan --out report.md --poc-dir results/pocs   # 扫描时自动产出全部 PoC
 ```
 
+### 验证外部发现：做扫描器的裁判
+
+攻击面可以靠加领域变宽（引擎零改动），但更值钱的是**输入面**变宽：别人的命中也能进来。
+
+`ced verify` 把 nuclei / Burp / HAR / curl / 普通清单里的每一条当成**待验证的假设**，
+用与扫描**完全相同**的链路（差分 → 消融 → 判定 → 最小化）给出三态结论：
+
+| 结论 | 判据 |
+|---|---|
+| **已证实** | 至少一对实现产生了结构分歧（级别由内核给出，**不是报告方的自述**） |
+| **已证伪** | 所有实现对这份输入理解一致 |
+| **证不了** | 没有任何领域的解析器能接受这份输入（会写清缺什么，例如"缺完整请求字节"） |
+
+```bash
+python -m ced verify findings.json --format nuclei --out verify.md
+python -m ced verify burp-sitemap.xml          # 按扩展名自动识别格式
+cat urls.txt | python -m ced verify -           # 从 stdin 读
+```
+
+控制台里对应「**验证外部发现**」标签页：贴进去点一下。
+
 接入任意 OpenAI 兼容端点（**不配置就全链路自动降级为纯确定性模式**，扫描照跑）：
 
 ```bash
@@ -212,14 +235,17 @@ flowchart TD
 
 | 领域 | 观测对象 | 覆盖 | 能指出的漏洞类别 | 判定依据 |
 |---|---|---|---|---|
-| `http1-framing` | 一条 HTTP/1.1 请求 | 9 参照实现 · **8 对定向对照**（6 条语料轴） | **请求走私**（CL.TE / TE.CL / TE.TE）→ 前置防护绕过 · CWE-444 | 两侧消费的字节数不同 ∧ 差额字节可控 |
-| `url-norm` | 一个请求目标（target） | 10 参照实现 · **9 对定向对照**（10 条语料轴，含 1 条良性对照） | **鉴权绕过 / 路径穿越 / 路由绕过** · CWE-22 / CWE-863 | 两侧归一化出的资源不同 ∧ 差异字节可控 |
+| `http1-framing` | 一条 HTTP/1.1 请求 | 9 实现 · 8 对轴 | **请求走私**（CL.TE / TE.CL / TE.TE）→ 前置防护绕过 · CWE-444 | 两侧消费的字节数不同 ∧ 差额字节可控 |
+| `url-norm` | 一个请求目标 | 12 实现 · 11 对轴 | **鉴权绕过 / 路径穿越**（含过长 UTF-8、NUL 截断）· CWE-22 / CWE-863 | 两侧归一化出的资源不同 ∧ 差异字节可控 |
+| `host-norm` | Host 头的值 | 9 实现 · 8 对轴 | **虚拟主机绕过 / 缓存投毒**（尾随点、大小写、默认端口、userinfo、IDN、IP 字面量）· CWE-436 | 两侧认成不同站点 ∧ 差异字节可控 |
+| `query-norm` | 查询串字节 | 11 实现 · 10 对轴 | **参数污染**（分隔符、重复参数取首/取尾、二次解码、`a[]`、排序）· CWE-235 | 两侧解析出不同参数集/取值 ∧ 可控 |
+| `enc-norm` | 一段待解释的字节 | 10 实现 · 10 对轴 | **过滤器绕过**（过长 UTF-8、NFC/NFD、全角、`%uXXXX`、字节编码、NUL）· CWE-180 | 检查侧与执行侧的解释不同 ∧ 可控 |
 
 **做不到的**（同一份清单也是答辩时的边界声明）：
 
 | 做不到 | 说明 |
 |---|---|
-| 编码 / Unicode 归一化、参数解析、错误处理状态机 | 设计上支持（`DomainAdapter` 协议），但**尚未实现** |
+| 错误处理 / 状态机类分歧 | 设计上支持（`DomainAdapter` 协议），但**尚未实现** |
 | 注入类 / 反序列化 / SSRF / XSS | 不在这套 oracle 的能力范围内 |
 | 资产发现 / 端口扫描 / 指纹 / CVE 匹配 | 完全不做 |
 | 读源码做数据流分析 | 全程黑盒，只读字节流 |
@@ -244,9 +270,10 @@ flowchart TD
 
 | 模块 | 文件 | 职责 |
 |---|---|---|
-| 领域适配器 | `ced/adapters/` | 两个领域：`http1_framing`（分帧）与 `url_norm`（路径归一化）；各自持有语料/分类/消融/量化/最小化 |
+| 领域适配器 | `ced/adapters/` | **5 个领域**（分帧 / 路径 / Host / 查询串 / 编码）；各自持有语料、分类、消融、量化、最小化、PoC 片段。类上加 `@register` 即接入，引擎零改动 |
 | 分帧内核 | `ced/impls/http_reader.py` | 可配置的 HTTP/1.1 分帧解析器（分帧领域唯一解析真源） |
 | 路径内核 | `ced/impls/path_norm.py` | 可配置的 URL 路径归一化器（路径领域唯一解析真源） |
+| 其它领域内核 | `ced/impls/{host,query,enc}_norm.py` | Host / 查询串 / 编码解释三个领域各自的解析内核 |
 | 参照实现 | `ced/impls/reference.py` · `url_reference.py` | 9 + 10 个"只在一个策略点上不同"的实现 |
 | 变异 | `ced/mutate/` | 轴语料 + 确定性定向变异（分帧与路径各一套） |
 | 探针 | `ced/probe/` | local / socket / chain 三种观测源 + 探针服务 |
@@ -261,6 +288,7 @@ flowchart TD
 | 指标 | `ced/metrics.py` | 指标自动出数 + 交叉矩阵热力图 |
 | 扫描任务 | `ced/scan/` | 任务状态机、后台执行、事件流、中止时保留已完成部分 |
 | 控制台 | `ced/web/` | 零依赖 `ThreadingHTTPServer` + 单页前端；模型文字与确定性证据**分栏**渲染 |
+| 验证层 | `ced/intake/` | 外部发现（nuclei / Burp / HAR / curl / 清单）→ 假设 → 三态验证（已证实 / 已证伪 / 证不了） |
 | 真实链路 | `docker/` + `ced/probe/front.py` | Docker compose（**本机无 Docker，交由队友验证**）与无 Docker 的替身前置 |
 
 新增一个领域 = 实现 `DomainAdapter` 协议并在注册表登记，**引擎一行都不用改**。
@@ -290,36 +318,16 @@ flowchart TD
 python -m ced regression
 ```
 
-18 个类别（两个领域各 9），每个都标注 RFC 出处与预期分歧字段。
-案例按自己的 `domain` 字段选适配器 —— 加领域不需要改反验证器。
+47 个类别（5 个领域），每个都标注 RFC 出处与预期分歧字段（见各案例文件的
+`reference` / `note`）。案例按自己的 `domain` 字段选适配器 —— 加领域不需要改反验证器。
 
-**`http1-framing`（9 个）**
-
-| 案例 | 分歧点 |
-|---|---|
-| `cl-te-conflict` | CL 与 TE 并存（经典走私结构） |
-| `dup-cl-conflict` | 冲突的重复 Content-Length |
-| `te-bad-token` | 非标准 Transfer-Encoding token |
-| `cl-leading-zero` | `Content-Length: 03` 前导零 |
-| `header-name-space` | `Content-Length : 3` 冒号前空格 |
-| `obs-fold` | 折行头 |
-| `te-case-sensitive` | 编码名大小写 |
-| `chunk-bare-lf` | 分块行尾用裸 LF |
-| `request-line-absolute-uri` | 请求行为绝对形式（一侧放行、一侧拒绝） |
-
-**`url-norm`（9 个）**
-
-| 案例 | 分歧点 |
-|---|---|
-| `url-dot-segment` | `/admin/../pub`：一侧解算 `..`，一侧保留（RFC 3986 §5.2.4） |
-| `url-encoded-dot` | `/pub/%2e%2e/admin`：小写十六进制被宽松实现解出来（RFC 3986 §2.1） |
-| `url-double-encoded` | `/pub/%252E%252E/admin`：要第二层解码才现形 |
-| `url-backslash` | `/admin\..\pub`：Windows/IIS 把 `\` 当分隔符 |
-| `url-encoded-separator` | `/pub%2Fadmin`：编码的 `/` 算不算分隔符 |
-| `url-duplicate-slash` | `//admin`：连续斜杠是否折叠 |
-| `url-trailing-dot` | `/admin.`：Windows 忽略段尾的点与空格 |
-| `url-semicolon-params` | `/admin;x=/pub`：矩阵参数是否剥离 |
-| `url-case-fold` | `/ADMIN`：路径大小写是否敏感 |
+| 领域 | 案例数 | 覆盖点 |
+|---|---|---|
+| `http1-framing` | 9 | CL/TE 并存与优先级、CL 写法（前导零）、重复 CL、TE token 与大小写、折行头、裸 LF、绝对 URI |
+| `url-norm` | 11 | `..` 解算、解码层数、百分号大小写、反斜杠、连续斜杠、尾随点、矩阵参数、路径大小写、`%2F`、**过长 UTF-8**、**NUL 截断** |
+| `host-norm` | 8 | 尾随点、大小写、默认端口、userinfo（`evil@victim`）、重复点、IDN、IPv6 字面量、百分号编码主机名 |
+| `query-norm` | 10 | 分隔符含 `;`、重复参数取首/取尾/全要、解码层数、二次解码、`+` 是否当空格、空值、`a[]`、参数名大小写、排序 |
+| `enc-norm` | 9 | 过长 UTF-8、NFC/NFD、全角折叠、`%uXXXX`、孤立代理项、字节编码（UTF-8/Latin-1）、NUL 截断 |
 
 > **先证明能重新挖出已知的，再谈能发现未知的。**
 > 期望值全部**独立手写**（来自 RFC 与公开先例），不是工具输出 —— 回归才有参考价值。
@@ -342,6 +350,7 @@ python -m ced regression
 | `ced/assist/` | 大模型提案层（schema / client / compile / ledger / propose） |
 | `ced/agent/` | 闭环 agent（tools / loop） |
 | `ced/scenario/` | 攻击场景模板与端到端 PoC |
+| `ced/intake/` | 验证层：外部发现解析与三态验证（做扫描器的裁判） |
 | `ced/scan/` | 扫描任务层（job / runner） |
 | `ced/web/` | 网页控制台（server.py + index.html） |
 | `docker/` | 真实 nginx → 探针链路（compose / 离线快照 / **队友验证清单**） |

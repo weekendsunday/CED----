@@ -31,11 +31,27 @@ $$\text{漏洞} \iff \text{语义分歧} \;\wedge\; \text{分歧点攻击者可�
 git clone https://github.com/weekendsunday/CED----.git
 cd CED----
 
-python -m ced regression          # 已知案例反验证
+python -m ced web                 # 打开网页界面（推荐，点鼠标就行）
+```
+
+不想用界面 —— 全部命令：
+
+```bash
+python -m ced regression               # 已知案例反验证
+python -m ced probe 请求文件            # 探测一份原始字节文件
+python -m ced case <id>                # 摊开一个已知案例
 python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 ```
 
 Windows 上也可以直接双击 `selfcheck.bat`。
+
+### 网页界面做什么
+
+| 面板 | 用途 |
+|---|---|
+| **探测文件** | 拖入一份请求文件 → 看它在各实现之间有没有耦合误差，给出判定与最小复现样本 |
+| **内置案例** | 9 个已知分歧类别，点开看原始字节、两侧观测、判定与证据 |
+| **自检** | 一键跑已知案例反验证，确认程序本身是好的 |
 
 ---
 

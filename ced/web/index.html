@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CED — 产品耦合误差检测</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#1c2024; --dim:#6b7480;
+    --accent:#2c6ef2; --bad:#d93b3b; --warn:#c8811a; --good:#1f8a4c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{padding:22px 28px 14px}
+  h1{margin:0;font-size:19px;letter-spacing:.3px}
+  .sub{margin:6px 0 0;color:var(--dim);font-size:13px}
+  nav.tabs{display:flex;gap:6px;padding:0 28px;border-bottom:1px solid var(--line);
+           background:var(--card)}
+  .tab{border:0;background:none;padding:11px 16px;cursor:pointer;font-size:14px;
+       color:var(--dim);border-bottom:2px solid transparent}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  main{padding:20px 28px 60px;max-width:1100px}
+  .panel{display:none} .panel.active{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:18px;margin-bottom:16px}
+  .drop{border:2px dashed #c6ccd6;border-radius:10px;padding:34px;text-align:center;
+        color:var(--dim);cursor:pointer;transition:.15s;background:#fbfcfd}
+  .drop.hot{border-color:var(--accent);background:#eef4ff;color:var(--accent)}
+  .drop b{color:var(--ink)}
+  button.primary{background:var(--accent);color:#fff;border:0;border-radius:8px;
+                 padding:10px 20px;font-size:14px;cursor:pointer}
+  button.primary:disabled{background:#b8c2d0;cursor:not-allowed}
+  button.ghost{background:#fff;border:1px solid var(--line);border-radius:8px;
+               padding:8px 14px;cursor:pointer}
+  .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:14px}
+  label{color:var(--dim);font-size:13px}
+  select,input[type=text]{padding:7px 10px;border:1px solid var(--line);border-radius:7px;
+                          font-size:13px;background:#fff;min-width:120px}
+  pre{background:#f2f4f7;border:1px solid var(--line);border-radius:8px;padding:12px;
+      overflow:auto;font:12px/1.55 Consolas,Menlo,monospace;white-space:pre-wrap;
+      word-break:break-all;margin:8px 0 0}
+  .summary{display:flex;gap:22px;flex-wrap:wrap;padding:14px 18px;background:var(--card);
+           border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
+  .summary .k{color:var(--dim);font-size:12px;margin-right:6px}
+  .good{color:var(--good);font-weight:700}
+  .bad{color:var(--bad);font-weight:700}
+  .warn{color:var(--warn);font-weight:700}
+  .finding{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--bad);
+           border-radius:10px;padding:16px;margin-bottom:14px}
+  .finding.unknown{border-left-color:var(--warn)}
+  .finding h3{margin:0 0 10px;font-size:14px;font-weight:600}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;
+         font-weight:700;margin-left:8px;vertical-align:1px}
+  .badge.security{background:#fdeaea;color:var(--bad)}
+  .badge.unknown{background:#fdf3e2;color:var(--warn)}
+  .badge.compatibility{background:#eef1f4;color:var(--dim)}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:12px}
+  tr.diff{background:#fff8f8}
+  tr.diff td{color:#8a1f1f}
+  tr.diff td:first-child::after{content:" ←";color:var(--bad)}
+  .kv{margin:5px 0;font-size:13px}
+  .kv .k{color:var(--dim);display:inline-block;min-width:76px}
+  .err{background:#fdeaea;border:1px solid #f3c4c4;color:#8a1f1f;padding:12px 16px;
+       border-radius:8px}
+  .note{color:var(--dim);font-size:12.5px;margin-top:6px}
+  .caselist{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .caseitem{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .caseitem:hover{background:#f2f6ff}
+  .caseitem.sel{background:#eaf1ff}
+  .caseitem .id{font-weight:600}
+  .caseitem .meta{color:var(--dim);font-size:12px}
+  .split{display:grid;grid-template-columns:320px 1fr;gap:18px}
+  .ok{color:var(--good)} .no{color:var(--bad)}
+  .checkitem{padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>CED — 产品耦合误差检测</h1>
+  <p class="sub">把同一份请求字节交给两个实现，看它们对「这条请求到哪里结束」的判断是否一致。
+     不一致且由攻击者可控的字节承载 → 就是耦合误差。</p>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="probe">探测文件</button>
+  <button class="tab" data-tab="cases">内置案例</button>
+  <button class="tab" data-tab="check">自检</button>
+</nav>
+
+<main>
+  <!-- ============ 探测文件 ============ -->
+  <section class="panel active" id="tab-probe">
+    <div class="card">
+      <div class="drop" id="drop">
+        <div style="font-size:15px;margin-bottom:6px"><b>把请求文件拖到这里</b></div>
+        <div>或点击选择文件 —— 必须是<b>原始字节</b>（抓包导出），
+             用记事本另存过会改换行符</div>
+        <input type="file" id="file" hidden>
+      </div>
+      <div id="fileinfo" class="note"></div>
+
+      <div class="row">
+        <label>比较方式</label>
+        <select id="mode">
+          <option value="all">全部组合（内置 9 个实现两两比对）</option>
+          <option value="pair">指定一对</option>
+        </select>
+        <span id="pairbox" style="display:none">
+          <select id="left"></select>
+          <span style="color:var(--dim)">↔</span>
+          <select id="right"></select>
+        </span>
+        <label style="margin-left:8px">拓扑文件（可选）</label>
+        <input type="text" id="topology" placeholder="留空 = 用内置实现" style="min-width:240px">
+      </div>
+
+      <div class="row">
+        <button class="primary" id="go" disabled>开始探测</button>
+        <span class="note" id="hint">先选一个文件</span>
+      </div>
+    </div>
+
+    <div id="probe-result"></div>
+  </section>
+
+  <!-- ============ 内置案例 ============ -->
+  <section class="panel" id="tab-cases">
+    <div class="card">
+      <div class="split">
+        <div>
+          <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
+            已知案例库（<span id="casecount">0</span> 个）
+          </div>
+          <div class="caselist" id="caselist"></div>
+        </div>
+        <div id="casedetail" class="note">← 点左边一个案例</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 自检 ============ -->
+  <section class="panel" id="tab-check">
+    <div class="card">
+      <p style="margin-top:0;color:var(--dim)">
+        跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
+      <button class="primary" id="runchk">跑自检</button>
+      <div id="checkresult" style="margin-top:14px"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let fileB64 = '', fileName = '';
+
+/* ---------- 标签页 ---------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+  document.querySelectorAll('.panel').forEach(p =>
+    p.classList.toggle('active', p.id === 'tab-' + t.dataset.tab));
+});
+
+/* ---------- 选文件 ---------- */
+function toB64(buf){
+  const b = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s);
+}
+function takeFile(f){
+  const r = new FileReader();
+  r.onload = () => {
+    fileB64 = toB64(r.result); fileName = f.name;
+    $('#fileinfo').innerHTML = '已选择 <b>' + esc(f.name) + '</b>（' +
+      f.size + ' 字节）';
+    $('#go').disabled = false;
+    $('#hint').textContent = '可以点「开始探测」了';
+  };
+  r.readAsArrayBuffer(f);
+}
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+$('#file').onchange = e => e.target.files[0] && takeFile(e.target.files[0]);
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('hot');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('hot');
+}));
+drop.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0]; if (f) takeFile(f);
+});
+
+/* ---------- 比较方式 ---------- */
+$('#mode').onchange = e => {
+  $('#pairbox').style.display = e.target.value === 'pair' ? '' : 'none';
+};
+
+/* ---------- 载入内置实现 ---------- */
+fetch('/api/impls').then(r => r.json()).then(d => {
+  ['#left','#right'].forEach((sel, i) => {
+    const el = $(sel);
+    el.innerHTML = d.impls.map(x =>
+      `<option value="${x.id}" title="${esc(x.deviation)}">${x.id}</option>`).join('');
+    el.selectedIndex = i === 0 ? 0 : Math.min(1, d.impls.length - 1);
+  });
+});
+
+/* ---------- 探测 ---------- */
+$('#go').onclick = async () => {
+  const out = $('#probe-result');
+  out.innerHTML = '<div class="card">探测中…</div>';
+  $('#go').disabled = true;
+  try {
+    const res = await fetch('/api/probe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        data_b64: fileB64,
+        mode: $('#mode').value,
+        left: $('#left').value, right: $('#right').value,
+        topology: $('#topology').value.trim()
+      })
+    });
+    renderProbe(await res.json());
+  } catch (err) {
+    out.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+  $('#go').disabled = false;
+};
+
+function renderProbe(d){
+  const out = $('#probe-result');
+  if (d.error) return out.innerHTML = '<div class="err">' + esc(d.error) + '</div>';
+
+  const divs = d.results.filter(r => r.diverged);
+  const sec  = divs.filter(r => r.is_security);
+  let h = `<div class="summary">
+      <span><span class="k">输入</span><b>${d.payload_len}</b> 字节</span>
+      <span><span class="k">比较</span><b>${d.pairs_tested}</b> 组</span>
+      <span><span class="k">发现分歧</span><b class="${divs.length?'bad':'good'}">${divs.length}</b> 组</span>
+      <span><span class="k">其中安全级</span><b class="${sec.length?'bad':'good'}">${sec.length}</b> 组</span>
+      <span><span class="k">拓扑</span>${esc(d.topology)}</span>
+    </div>`;
+
+  h += `<div class="card"><div class="kv"><span class="k">原始字节</span></div>
+        <pre>${esc(d.payload_repr)}</pre></div>`;
+
+  if (!divs.length){
+    h += `<div class="card"><b class="good">两侧理解一致</b>
+      <div class="note">这不等于安全 —— 只说明在这份输入上，被测的这些实现没有分歧。</div></div>`;
+    return out.innerHTML = h;
+  }
+  divs.sort((a,b) => (b.is_security?1:0) - (a.is_security?1:0));
+  out.innerHTML = h + divs.map(renderFinding).join('');
+}
+
+function renderFinding(r){
+  const keys = new Set(r.diff_keys);
+  const rows = Object.entries(r.observations).map(([k, v]) => {
+    const d = keys.has(k) ? ' class="diff"' : '';
+    return `<tr${d}><td>${esc(k)}</td><td>${esc(JSON.stringify(v[0]))}</td>` +
+           `<td>${esc(JSON.stringify(v[1]))}</td></tr>`;
+  }).join('');
+  const mini = r.minimized_repr
+    ? `<div class="kv"><span class="k">最小复现</span>${r.payload_len} → ${r.minimized_len} 字节</div>
+       <pre>${esc(r.minimized_repr)}</pre>` : '';
+
+  return `<div class="finding ${r.level === 'security' ? '' : 'unknown'}">
+    <h3>${esc(r.left)} ↔ ${esc(r.right)}
+        <span class="badge ${esc(r.level)}">${esc(r.level)}</span>
+        <span style="color:var(--dim);font-weight:400;font-size:12px">（${esc(r.kind)}）</span></h3>
+    <table><tr><th>观测字段</th><th>${esc(r.left)}</th><th>${esc(r.right)}</th></tr>${rows}</table>
+    <div class="kv"><span class="k">判定理由</span>${esc(r.reason)}</div>
+    ${r.ablation ? `<div class="kv"><span class="k">可控性证据</span>${esc(r.ablation)}</div>` : ''}
+    ${r.cwe ? `<div class="kv"><span class="k">CWE</span>${esc(r.cwe)}
+        ${r.scenario ? '　场景 <b>' + esc(r.scenario) + '</b>' : ''}</div>` : ''}
+    <div class="kv"><span class="k">安全后果</span>${esc(r.effect)}</div>
+    <div class="kv"><span class="k">修复建议</span>${esc(r.fix)}</div>
+    ${mini}
+  </div>`;
+}
+
+/* ---------- 内置案例 ---------- */
+fetch('/api/cases').then(r => r.json()).then(d => {
+  $('#casecount').textContent = d.cases.length;
+  $('#caselist').innerHTML = d.cases.map(c =>
+    `<div class="caseitem" data-id="${esc(c.id)}">
+       <div class="id">${esc(c.id)}</div>
+       <div class="meta">${esc(c.axis)}　${c.payload_len} 字节</div>
+     </div>`).join('');
+  document.querySelectorAll('.caseitem').forEach(el => el.onclick = () => {
+    document.querySelectorAll('.caseitem').forEach(x =>
+      x.classList.toggle('sel', x === el));
+    loadCase(el.dataset.id);
+  });
+});
+
+async function loadCase(id){
+  const box = $('#casedetail');
+  box.innerHTML = '加载中…';
+  const d = await (await fetch('/api/case?id=' + encodeURIComponent(id))).json();
+  if (d.error) return box.innerHTML = '<div class="err">' + esc(d.error) + '</div>';
+  const c = d.case, r = d.result;
+  box.innerHTML = `
+    <div class="kv"><span class="k">案例</span><b>${esc(c.id)}</b></div>
+    <div class="kv"><span class="k">分歧轴</span>${esc(c.axis)}</div>
+    <div class="kv"><span class="k">对照</span>${esc(c.left)} ↔ ${esc(c.right)}</div>
+    <div class="kv"><span class="k">出处</span>${esc(c.reference || '—')}</div>
+    <div class="kv"><span class="k">说明</span>${esc(c.note || '—')}</div>
+    <div class="kv"><span class="k">回归</span>
+      <b class="${d.regression.passed ? 'ok' : 'no'}">
+      ${d.regression.passed ? 'PASS' : 'FAIL'}</b>　${esc(d.regression.detail)}</div>
+    <div class="kv" style="margin-top:10px"><span class="k">原始字节</span></div>
+    <pre>${esc(d.payload_repr)}</pre>
+    ${r.diverged ? renderFinding(r) : '<div class="note">两侧理解一致</div>'}`;
+}
+
+/* ---------- 自检 ---------- */
+$('#runchk').onclick = async () => {
+  const box = $('#checkresult');
+  box.innerHTML = '跑中…';
+  $('#runchk').disabled = true;
+  const d = await (await fetch('/api/regression', {method:'POST'})).json();
+  const ok = d.passed === d.total;
+  box.innerHTML = `<div class="summary">
+      <span><span class="k">结果</span>
+        <b class="${ok?'good':'bad'}">${d.passed}/${d.total} 通过</b></span></div>` +
+    d.items.map(i => `<div class="checkitem">
+        <b class="${i.passed?'ok':'no'}">${i.passed?'PASS':'FAIL'}</b>
+        ${esc(i.name)}　<span style="color:var(--dim)">${esc(i.detail)}</span></div>`).join('');
+  $('#runchk').disabled = false;
+};
+</script>
+</body>
+</html>

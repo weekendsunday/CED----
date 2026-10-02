@@ -246,6 +246,14 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    from .web.server import main as web_main
+    argv = ["--port", str(args.port), "--host", args.host]
+    if args.no_open:
+        argv.append("--no-open")
+    return web_main(argv)
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .probe.server import serve
     serve(args.host, args.data_port, args.api_port, reference.policy_of(args.policy))
@@ -282,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", default=None)
     s.add_argument("--db", default=None)
     s.set_defaults(func=_cmd_scan)
+
+    w = sub.add_parser("web", help="启动本地网页界面（点鼠标操作，不用记命令）")
+    w.add_argument("--port", type=int, default=8777)
+    w.add_argument("--host", default="127.0.0.1")
+    w.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    w.set_defaults(func=_cmd_web)
 
     v = sub.add_parser("serve", help="起探针服务（供 socket / chain 方式接入真实产品）")
     v.add_argument("--policy", default="ref-cl-first")

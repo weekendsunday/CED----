@@ -1,0 +1,61 @@
+# 客户拓扑：真实 nginx 前置 → CED 探针（扮演后端）
+#
+# 这条链路里的 nginx 是**真的**被测产品（docker/front/nginx.conf），不是参照实现：
+#   client → nginx(宿主 8080) → probe:8800（容器内）
+#   probe 把"它收到的字节"记成一个视角；控制口 8801 暴露到宿主，供 CED 取回。
+#
+# 跑起来（三步，缺一步就报「链路不可用」）：
+#   ① 起栈：  powershell -NoProfile -File docker/up.ps1
+#             （等价于 docker compose up -d --build，并等探针 /health ready）
+#   ② 跑扫描：python -m ced scan --topology ced/topologies/real-nginx-probe.yaml \
+#                                --limit 12 --out results/real.md
+#   ③ 收工：  powershell -NoProfile -File docker/down.ps1
+#
+# 为什么必须带 --limit：前置不会对上游半关闭，而探针要等到客户端半关闭或自己的
+# 空闲超时（5 秒，见 ced/probe/server.py 的 IDLE_TIMEOUT）才处理一条请求。
+# 于是每条用例 ≈ 5 秒；不限制用例数会跑到天荒地老。
+#
+# 端口约定与 docker/docker-compose.yml 严格对应，改一边就要改另一边：
+#   endpoint   127.0.0.1:8080  = nginx 前置的宿主映射口（容器 80）
+#   probe_api  127.0.0.1:8801  = 探针控制口（/health、/views、/reset）
+#   （探针数据口 8800 只在 compose 内部网络，不映射到宿主）
+#
+# 两边是什么：
+#   customer-gateway —— 真实 nginx。runner=chain 表示"发字节给前置，再去探针取视角"。
+#                       它没有 policy：它的定帧策略由 docker/front/nginx.conf 决定。
+#   三个参照实现   —— 进程内、确定性的"只在一个策略点上不同"的基线（见
+#                       ced/impls/reference.py）。它们给出的是**疑点**，不是对 nginx 的断言。
+
+domain: http1-framing
+
+impls:
+  # ---- 链路侧：真实 nginx（被观测的前置）----
+  - id: customer-gateway
+    name: customer-gateway (nginx)
+    version: "1.25"
+    role: front
+    runner: chain
+    endpoint: 127.0.0.1:8080
+    probe_api: 127.0.0.1:8801
+    image: nginx:1.25-alpine
+    notes: "真实 nginx 前置（docker/front/nginx.conf）：客户端入口 8080，后面接探针 8800。"
+
+  # ---- 基准侧：本地参照实现（进程内，零依赖）----
+  - id: ref-cl-first
+    role: back
+    runner: local
+    policy: ref-cl-first
+
+  - id: ref-te-first
+    role: back
+    runner: local
+    policy: ref-te-first
+
+  - id: ref-lenient-cl
+    role: back
+    runner: local
+    policy: ref-lenient-cl
+
+# 报告里描述的"若二者串联会怎样"：真实 nginx 前置 → CL 优先的后端。
+# nginx 自身怎么定帧由探针实测；这里选 CL 优先是因为它是最常见的后端基线。
+chain: [customer-gateway, ref-cl-first]

@@ -1,0 +1,90 @@
+# 客户拓扑：真实 nginx → 真实 gunicorn → CED 探针（第二档演示）
+#
+# 第一档（real-nginx-probe.yaml）只有一跳：nginx 逐字节转发，探针观测到的字节
+# 最接近原始输入。这一份多穿一层**真实的 WSGI 服务器**：
+#
+#   段1  client → nginx(front, 8080) ──────────────→ probe:8800    [同第一档]
+#   段2  client → nginx(gateway, 8081) → gunicorn(8090) → probe:8800
+#
+# 为什么段2 需要应用配合：gunicorn 是 WSGI 服务器，它把 HTTP **自己解析完**才把 environ
+# 交给应用 —— WSGI 层面拿不到原始字节。所以 docker/backend/app.py 把「gunicorn 的视图」
+# 重建后转给探针（重建时把原始 CL/TE 回带到 X-CED-Orig-*）。因此：
+#
+#   段1 的观测是**字节级**的（nginx 转发出去什么，探针就看到什么）；
+#   段2 的观测是**语义级**的（gunicorn 理解成了什么），两者不能混为一谈。
+#   这条差别写在 docker/README.md 里，读报告时要按这个口径解释。
+#
+# 跑起来（四步）：
+#   ① 起栈：  powershell -NoProfile -File docker/up.ps1 -Gunicorn
+#             （等价于 docker compose --profile gunicorn up -d --build）
+#   ② 跑扫描：python -m ced scan --topology ced/topologies/real-nginx-gunicorn.yaml \
+#                                --limit 12 --out results/real-gunicorn.md
+#   ③ 想单看某一条：python -m ced probe <请求文件> --topology ced/topologies/real-nginx-gunicorn.yaml
+#   ④ 收工：  powershell -NoProfile -File docker/down.ps1
+#
+# 端口约定与 docker/docker-compose.yml 严格对应：
+#   8080 nginx(front)      → probe:8800                段1 入口
+#   8081 nginx(gateway)    → backend:8090 (gunicorn)   段2 入口
+#   8090 gunicorn          → probe:8800                段2 中转（绕过 nginx 的直连观测点）
+#   8801 探针控制口（两个 runner=chain 的观测点共用它；每次观测前引擎都会先 POST /reset，
+#        所以共用不会串味 —— 前提是**不要**并行跑两次扫描）
+#
+# 没有 Docker 的机器上，本文件里的两个 runner=chain 实现必然探测失败，
+# 扫描会以「链路不可用」中止并**不产出任何结论**（这是刻意设计，见 ced/probe/chain.py）。
+# 只想跑纯基准就用第一份拓扑，或直接 python -m ced scan --mode axis。
+
+domain: http1-framing
+
+impls:
+  # ---- 链路侧①：真实 nginx（第一档，nginx 自己定帧）----
+  - id: customer-gateway
+    name: customer-gateway (nginx)
+    version: "1.25"
+    role: front
+    runner: chain
+    endpoint: 127.0.0.1:8080
+    probe_api: 127.0.0.1:8801
+    image: nginx:1.25-alpine
+    notes: "段1：nginx 容器 80 → 探针 8800，字节级观测。"
+
+  # ---- 链路侧②：真实 nginx + 真实 gunicorn（第二档）----
+  - id: nginx-gunicorn
+    name: nginx-gateway → gunicorn (seg2)
+    version: "nginx 1.25 + gunicorn 21"
+    role: front
+    runner: chain
+    endpoint: 127.0.0.1:8081
+    probe_api: 127.0.0.1:8801
+    image: ced/backend:dev
+    notes: "段2 入口：nginx(gateway,8081) → gunicorn(8090) → 探针(8800)；观测口径是语义级（WSGI 重建）。"
+
+  # ---- 链路侧③：绕过 nginx，单独观测 gunicorn 自己的定帧 ----
+  - id: gunicorn-backend
+    name: gunicorn (direct)
+    version: "gunicorn 21"
+    role: front
+    runner: chain
+    endpoint: 127.0.0.1:8090
+    probe_api: 127.0.0.1:8801
+    image: ced/backend:dev
+    notes: "直连 gunicorn 8090，不经 nginx：用来区分『分歧是 nginx 引入的还是 gunicorn 引入的』。"
+
+  # ---- 基准侧：本地参照实现（进程内，零依赖）----
+  - id: ref-cl-first
+    role: back
+    runner: local
+    policy: ref-cl-first
+
+  - id: ref-te-first
+    role: back
+    runner: local
+    policy: ref-te-first
+
+  - id: ref-lenient-cl
+    role: back
+    runner: local
+    policy: ref-lenient-cl
+
+# 本文件的主角链路：nginx → gunicorn 这一跳（段2），后端对照取 CL 优先基线。
+# 段1（customer-gateway → ref-cl-first）的链路描述见 real-nginx-probe.yaml。
+chain: [nginx-gunicorn, ref-cl-first]

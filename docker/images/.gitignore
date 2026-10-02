@@ -1,0 +1,4 @@
+# 离线快照的 tar 体积大（几百 MB），不进仓库。
+# manifest.txt 与 tar 同生共死：没有 tar 的清单没有意义，一并忽略。
+*.tar
+manifest.txt

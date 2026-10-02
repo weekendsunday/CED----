@@ -1,0 +1,14 @@
+# 只为了让 docker build 的上下文最小化（探针镜像的 context 是仓库根目录）。
+# 镜像里真正需要的只有：ced/、main.py、docker/backend/。
+.git/
+.gitattributes
+.vscode/
+docs/
+refs/
+results/
+docker/images/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.db
+ced.db

@@ -1,0 +1,136 @@
+# CED 真实链路演示栈 —— 只做观测，不做安全防护。
+#
+#   client ──> front(nginx:1.25-alpine，被观测的前置) ──> probe(扮演真实后端)
+#                                                          └─ 记录"它收到的字节"为一个视角
+#              CED 引擎(runner=chain) <── 控制口 8801 (/views、/reset)
+#
+# 端口约定（**与 ced/topologies/real-*.yaml 里的 endpoint / probe_api 一一对应**，
+# 改这里就必须同步改拓扑文件）：
+#   宿主 8080 → front(nginx) 容器 80          客户端入口：第一档（nginx → 探针）
+#   宿主 8801 → probe 控制口                  引擎取视角 / 清视角
+#   宿主 8081 → gateway(nginx) 容器 8081      第二档入口（--profile gunicorn）
+#   宿主 8090 → backend(gunicorn) 容器 8090   第二档中转（--profile gunicorn）
+#   探针**数据口 8800 不映射到宿主**：它只应被 front / backend 经过内部网络访问。
+#
+# 四个服务：probe / front（必需）+ gateway / backend（第二档演示，profile=gunicorn，默认不启）。
+#
+# 用法与「本机无 Docker，未实机验证」的说明见 docker/README.md。
+
+name: ced-bench
+
+services:
+  # ---------------------------------------------------------------------------
+  # 探针：扮演"真实后端"。收到原始字节 → 按 policy 定帧 → 记录一个视角 → 回观测 JSON。
+  # 它不做防护、不修请求，只如实报告它读到了什么。
+  # ---------------------------------------------------------------------------
+  probe:
+    build:
+      context: ..
+      dockerfile: docker/probe/Dockerfile
+    image: ced/probe:dev
+    container_name: ced-bench-probe
+    command:
+      - python
+      - -m
+      - ced.probe.server
+      - --host
+      - 0.0.0.0
+      - --data-port
+      - "8800"
+      - --api-port
+      - "8801"
+      - --policy
+      - ref-cl-first
+    expose:
+      - "8800"          # 只在内部网络里可达（不给宿主）
+    ports:
+      - "127.0.0.1:8801:8801"   # 控制口只绑回环，避免同机其它人扫到
+    healthcheck:
+      # 不用 curl/wget：镜像是 python:3.11-slim，直接用 python 探自己的控制口
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8801/health', timeout=2).status == 200 else 1)
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    networks:
+      - cednet
+
+  # ---------------------------------------------------------------------------
+  # 前置（被测对象）：官方 nginx，把探针数据口当唯一 upstream。
+  # 它按自己的策略解析、转发；它读到的与它转发的之间的差异就是要观测的东西。
+  # ---------------------------------------------------------------------------
+  front:
+    image: nginx:1.25-alpine
+    container_name: ced-bench-front
+    depends_on:
+      probe:
+        condition: service_healthy   # 上游名在启动时就要能解析，否则 nginx 起不来
+    ports:
+      - "8080:80"
+    volumes:
+      - ./front/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - cednet
+
+  # ---------------------------------------------------------------------------
+  # 第二档演示：nginx(gateway) → gunicorn(backend) → 探针。
+  # 用 profile 隔离，默认 `docker compose up` **不会**启动它们。
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: nginx:1.25-alpine
+    container_name: ced-bench-gateway
+    profiles: ["gunicorn"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./front/nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      cednet:
+        # 固定 IP：backend 的 --forwarded-allow-ips 就写这个地址
+        ipv4_address: 172.28.0.3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ced/backend:dev
+    container_name: ced-bench-backend
+    profiles: ["gunicorn"]
+    ports:
+      - "8090:8090"
+    environment:
+      # 探针数据口：本应用把「gunicorn 自己解析出来的请求」重建后转给探针，
+      # 于是探针记录的视角 = gunicorn 的定帧结果。置空则只回 environ JSON。
+      CED_PROBE_ADDR: "probe:8800"
+      # 只信任 compose 网段里 gateway(nginx) 的固定 IP；绝不写 "*"（见 docker/README.md）
+      CED_FORWARDED_ALLOW_IPS: "172.28.0.3"
+    healthcheck:
+      # gunicorn 只在 8090 上监听成功后健康；连不上会抛异常 → 退出码非 0
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket; socket.create_connection(('127.0.0.1', 8090), 2).close()
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    networks:
+      cednet:
+        ipv4_address: 172.28.0.4
+
+networks:
+  cednet:
+    driver: bridge
+    ipam:
+      config:
+        # 固定网段 + 固定 IP：--forwarded-allow-ips 才能写成确定的值，
+        # 而不是图省事写 "*"（那等于采信任何客户端伪造的 X-Forwarded-For）。
+        - subnet: 172.28.0.0/24

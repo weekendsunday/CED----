@@ -11,6 +11,7 @@ import json
 import socket
 
 from ..contracts import ImplSpec, Observation
+from ..impls import local_parser
 from ..impls import reference
 from ..impls.http_reader import parse_request
 from .chain import ChainEvaluator
@@ -33,15 +34,16 @@ def http_body(raw: bytes) -> bytes:
 
 
 class LocalEvaluator:
-    """进程内跑参照实现。"""
+    """进程内跑参照实现。按 ``spec.domain`` 分派到该领域的解析器。"""
 
     def __init__(self, specs: dict[str, ImplSpec]) -> None:
         self._specs = specs
 
     def __call__(self, impl_id: str, payload: bytes) -> Observation:
         spec = self._specs[impl_id]
-        policy = reference.policy_of(spec.policy or spec.impl_id)
-        res = parse_request(payload, policy)
+        policy_of, parse = local_parser(spec.domain)
+        policy = policy_of(spec.policy or spec.impl_id)
+        res = parse(payload, policy)
         return Observation(impl_id=impl_id, ok=res.ok,
                            error=None if res.ok else res.reason,
                            fields=res.to_fields())

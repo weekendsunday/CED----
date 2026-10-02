@@ -1,0 +1,14 @@
+{
+  "id": "url-encoded-dot",
+  "domain": "url-norm",
+  "axis": "path_percent_case",
+  "left": "url-gateway",
+  "right": "url-percent-strict",
+  "expect_kind": "path_traversal",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "payload_b64": "L3B1Yi8lMmUlMmUvYWRtaW4=",
+  "reference": "RFC 3986 §2.1（规范形式只承认大写十六进制）",
+  "note": "同一段 `/pub/%2e%2e/admin`：宽松实现大小写都收，小写 `%2e` 解码成真 `..` 再解算，认成 `/admin`；严格实现只认大写十六进制，拒解小写 `%2e`，原样保留认成 `/pub/%2e%2e/admin`。解码与否决定是否发生跨目录。"
+}

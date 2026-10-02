@@ -20,6 +20,8 @@ class ImplSpec:
     version: str = ""
     role: str = "solo"            # front | back | solo
     runner: str = "local"         # local | socket
+    #: 该实现属于哪个领域（决定本地用哪个解析器；socket/chain 不关心）
+    domain: str = "http1-framing"
     policy: str | None = None     # local 参照实现的策略名
     endpoint: str | None = None   # socket/chain 模式：host:port（探针，或前置入口）
     probe_api: str | None = None  # chain 模式：前置后面那个探针的控制口
@@ -180,3 +182,21 @@ class Rejected:
     axis: str
     reason: str
     detail: str = ""
+
+
+# --------------------------------------------------------------------------- 量化
+
+@dataclass(frozen=True)
+class Quantified:
+    """把"两侧理解不同"量化成"真的有东西错位了"。
+
+    各领域的量化指标不同（分帧是**被夹带的字节数**，路径归一化是**资源路径的错位**），
+    但契约一致：给步骤占位符、给数字、给人类可读描述。判定器不消费它 ——
+    它只影响报告与 PoC 的表述，**不参与 level 的判定**。
+    """
+
+    label: str                      # 指标名，如"被夹带字节数"
+    describe: str                   # 人类可读描述（进报告）
+    values: dict = field(default_factory=dict)   # 步骤模板占位符
+    numbers: tuple | None = None    # 脚本断言用的数字/字符串
+    verified: bool = True           # 是否真的量化出来了（否则如实写"未量化"）

@@ -58,10 +58,11 @@ def _request_line_variants(line: bytes) -> list[bytes]:
     return out
 
 
-def ablate(payload: bytes, div: Divergence, evaluate: Evaluator,
-           compare_keys: tuple[str, ...]) -> list[str]:
+def ablate_headers(payload: bytes, div: Divergence, evaluate: Evaluator,
+                   compare_keys: tuple[str, ...]) -> list[str]:
     """找出「把哪一处改掉，分歧就消失」—— 即这个分歧由谁承载。
 
+    **分帧领域的消融实验**（``Http1FramingAdapter.ablate`` 调用它）。
     覆盖两类攻击者可直接发送的东西：
       * 每一条请求头（移除它）
       * 请求行本身（折叠空白 / 方法大写 / 绝对形式相对化）
@@ -93,16 +94,20 @@ def ablate(payload: bytes, div: Divergence, evaluate: Evaluator,
 
 
 def judge(div: Divergence, kind: str, adapter, evaluate: Evaluator) -> Verdict:
-    """判定一个分歧能否升级为安全影响。"""
-    compare_keys = adapter.compare_keys
+    """判定一个分歧能否升级为安全影响。
+
+    **判定权只在这里**：本函数是全仓唯一产出 ``Verdict`` 的地方。
+    但"承载者是什么样"是**领域知识**，所以消融实验交给适配器
+    （``adapter.ablate``）—— 判定器只负责用它给出的证据下结论。
+    """
     boundary_kinds = adapter.boundary_kinds
     meta = adapter.meta(kind)
     keys = [d.key for d in div.diffs]
 
-    # 只有"可能被升级"的类型才跑消融实验 —— 它要对每条请求头重放两侧，不便宜
+    # 只有"可能被升级"的类型才跑消融实验 —— 它要把两侧重放很多遍，不便宜
     carriers: list[str] = []
     if kind in boundary_kinds or kind == adapter.kind_acceptance:
-        carriers = ablate(div.payload, div, evaluate, compare_keys)
+        carriers = adapter.ablate(div, evaluate)
     controllable = bool(carriers)
     ablation = None
     if carriers:

@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from ced.adapters import get as get_adapter
 from ced.adapters.http1_framing import Http1FramingAdapter
 from ced.contracts import (LEVEL_COMPAT, LEVEL_UNKNOWN, Divergence, Finding,
                            Observation, Verdict)
@@ -26,7 +27,6 @@ from ced.orchestrate.topology import demo, load
 from ced.pipeline import scan
 from ced.probe import Evaluator
 from ced.scenario import build_poc, build_pocs, templates, write_pocs
-from ced.scenario.poc import _accounting
 from ced import store
 
 ADAPTER = Http1FramingAdapter()
@@ -74,21 +74,23 @@ class TestPocContent(unittest.TestCase):
         cls.pocs = build_pocs(cls.result)
         cls.poc = cls.pocs[0]
 
-    def test_accounting_matches_chain_model(self):
-        """PoC 里的三个数字必须与链式模型算出来的一致，不能是估的。"""
-        evidence = _accounting(self.poc.left, self.poc.right, self.poc.request)
-        self.assertIsNotNone(evidence)
-        self.assertEqual(self.poc.forwarded, evidence.forwarded)
-        self.assertEqual(self.poc.back_consumed, evidence.back_consumed)
-        self.assertEqual(self.poc.smuggled_len, evidence.smuggled_len)
+    def test_quantification_matches_the_domain_model(self):
+        """PoC 里的量化必须与该领域的量化口径算出来的一致，不能是估的。"""
+        adapter = get_adapter("http1-framing")
+        quant = adapter.quantify(self.poc.request, self.poc.left, self.poc.right)
+        self.assertIsNotNone(quant)
+        self.assertEqual(self.poc.quant.label, quant.label)
+        self.assertEqual(self.poc.quant.numbers, quant.numbers)
         self.assertTrue(self.poc.verified)
 
     def test_scenario_is_classified_and_steps_carry_numbers(self):
         self.assertIn(self.poc.scenario, templates.SCENARIOS)
         self.assertTrue(self.poc.steps)
         joined = " ".join(self.poc.steps)
-        if self.poc.forwarded is not None:
-            self.assertIn(str(self.poc.forwarded), joined)
+        for key, value in self.poc.quant.values.items():
+            if key in ("front", "back"):
+                continue
+            self.assertIn(str(value), joined, f"步骤里缺 {key}={value}")
         self.assertIn(self.poc.fix, joined)
 
     def test_script_is_valid_python_and_embeds_the_sample(self):

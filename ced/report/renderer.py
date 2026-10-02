@@ -29,6 +29,16 @@ def _pretty(payload: bytes, limit: int = REPR_LIMIT) -> str:
     return text[:limit] + f"...(截断，原始 {len(payload)} 字节)"
 
 
+def _quant_cell(poc) -> str:
+    """把量化结果压成表格里的一格 —— 领域无关（分帧是字节数，路径是资源名）。"""
+    quant = poc.quant
+    if quant is None:
+        return "—（未量化）"
+    pairs = [(k, v) for k, v in quant.values.items() if k not in ("front", "back")]
+    body = "、".join(f"{k}={v}" for k, v in pairs) or quant.describe
+    return f"{quant.label}：{body}"
+
+
 def summary_of(result) -> dict:
     """级别/类型分布 —— 报告、控制台、SSE 完成事件共用同一份口径。"""
     by_level: dict[str, int] = {}
@@ -78,14 +88,12 @@ def render_markdown(result, *, domain: str = "http1-framing",
         out.append("")
         out.append("> 只对 `security` 级发现升级。`unknown` / `compatibility` 一律不升级。")
         out.append("")
-        out.append("| 用例 | 场景 | 链路 | 转发/消费/夹带（字节） | 脚本 |")
+        out.append("| 用例 | 场景 | 链路 | 量化 | 脚本 |")
         out.append("|---|---|---|---|---|")
         for poc in pocs:
-            numbers = ("—" if poc.forwarded is None else
-                       f"{poc.forwarded} / {poc.back_consumed} / **{poc.smuggled_len}**")
-            script = (f"`{poc_dir}/{poc.file_name}`" if poc_dir else poc.file_name)
             out.append(f"| `{poc.case_id}` | {poc.title} | "
-                       f"{poc.left} → {poc.right} | {numbers} | {script} |")
+                       f"{poc.left} → {poc.right} | {_quant_cell(poc)} | "
+                       f"{(f'`{poc_dir}/{poc.file_name}`' if poc_dir else poc.file_name)} |")
         out.append("")
 
     if not result.findings:
@@ -127,7 +135,7 @@ def render_markdown(result, *, domain: str = "http1-framing",
         out.append("  ```")
         out.append("")
         if f.chain_evidence:
-            out.append(f"- 链式复现：{f.chain_evidence}")
+            out.append(f"- 链路量化：{f.chain_evidence}")
             out.append("")
 
         poc = poc_by_case.get(f.case_id)
@@ -142,10 +150,10 @@ def render_markdown(result, *, domain: str = "http1-framing",
             for index, step in enumerate(poc.steps, 1):
                 out.append(f"{index}. {step}")
             out.append("")
-            if poc.forwarded is not None:
-                out.append(f"- 字节归属：前置转发 **{poc.forwarded}** 字节，"
-                           f"后端消费 {poc.back_consumed} 字节，"
-                           f"被夹带 **{poc.smuggled_len}** 字节")
+            if poc.quant is not None:
+                out.append(f"- **{poc.quant.label}**：{poc.quant.describe}")
+            else:
+                out.append("- 量化：无法计算（两侧含非本地实现）—— 需在真实拓扑上复现")
             if poc_dir:
                 out.append(f"- 可执行 PoC：`{poc_dir}/{poc.file_name}`"
                            f"（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）")

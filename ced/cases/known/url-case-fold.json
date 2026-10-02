@@ -1,0 +1,14 @@
+{
+  "id": "url-case-fold",
+  "domain": "url-norm",
+  "axis": "path_case_fold",
+  "left": "url-gateway",
+  "right": "url-case-insensitive",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "payload_b64": "L0FETUlO",
+  "reference": "大小写不敏感的文件系统 / 路由表",
+  "note": "同一段 `/ADMIN`：大小写敏感的前置认成 `/ADMIN`；大小写不敏感的文件系统 / 路由表的后端折叠成 `/admin`。受保护资源 `/admin` 的鉴权前缀可能被大小写变体绕过。"
+}

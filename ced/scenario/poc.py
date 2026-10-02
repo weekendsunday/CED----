@@ -3,9 +3,10 @@
 产出三样东西，缺一不可：
 
   1. **叙事** —— 场景、影响、前提、复现步骤（由 ``templates`` 提供，这里填数字）；
-  2. **字节归属** —— 前置转发多少 / 后端消费多少 / 夹带多少（复用 ``orchestrate.chain``
-     的链式模型，数字来自真实解析器，不是估的）；
-  3. **脚本** —— 一个零第三方依赖、可直接执行的复现脚本，离线可算账、授权后可真发。
+  2. **量化** —— 把"两侧理解不同"变成"真的有东西错位了"。口径由**领域适配器**给出
+     （分帧是"被夹带字节数"，路径归一化是"资源路径错位"），数字来自真实解析器；
+  3. **脚本** —— 一个零第三方依赖、可直接执行的复现脚本（按领域选骨架），
+     离线可算账、授权后可真发。
 
 只对 ``security`` 级发现生成 PoC。``unknown`` / ``compatibility`` 一律不出 ——
 **不夸大**是这套东西能站住的前提。
@@ -16,12 +17,14 @@ import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..impls import reference
-from ..orchestrate.chain import ChainEvidence, chain_evidence
+from ..adapters import get as get_adapter
+from ..contracts import Quantified
 from . import templates
 
 #: 生成的脚本文件名前缀
 POC_PREFIX = "poc_"
+#: 缺省领域（找回退适配器时用）
+DEFAULT_DOMAIN = "http1-framing"
 
 
 @dataclass(frozen=True)
@@ -36,15 +39,13 @@ class Poc:
     left: str
     right: str
     axis: str
+    domain: str
     impact: str
     fix: str
     evidence: str
     chain_desc: str
-    #: 字节归属；无法量化（两侧含非本地实现）时为 None
-    forwarded: int | None
-    back_consumed: int | None
-    smuggled_len: int | None
-    verified: bool
+    #: 量化：指标名 + 人类可读描述 + 参与量化的值；未量化时为 None
+    quant: Quantified | None
     original_len: int
     sample_len: int
     request_b64: str
@@ -59,57 +60,58 @@ class Poc:
     def file_name(self) -> str:
         return f"{POC_PREFIX}{self.case_id}.py"
 
+    @property
+    def verified(self) -> bool:
+        return self.quant is not None and self.quant.verified
+
     def to_dict(self) -> dict:
         """给报告 / 网页 / 落库用的扁平行。"""
+        quant = None
+        if self.quant is not None:
+            quant = {"label": self.quant.label, "describe": self.quant.describe,
+                     "values": {k: str(v) for k, v in self.quant.values.items()},
+                     "numbers": list(self.quant.numbers or ()),
+                     "verified": self.quant.verified}
         return {
             "case_id": self.case_id, "scenario": self.scenario, "title": self.title,
-            "level": self.level, "cwe": self.cwe, "left": self.left, "right": self.right,
-            "axis": self.axis, "impact": self.impact, "fix": self.fix,
-            "evidence": self.evidence, "chain_desc": self.chain_desc,
-            "forwarded": self.forwarded, "back_consumed": self.back_consumed,
-            "smuggled_len": self.smuggled_len, "verified": self.verified,
+            "level": self.level, "cwe": self.cwe, "left": self.left,
+            "right": self.right, "axis": self.axis, "domain": self.domain,
+            "impact": self.impact, "fix": self.fix, "evidence": self.evidence,
+            "chain_desc": self.chain_desc, "quant": quant,
+            "verified": self.verified,
             "original_len": self.original_len, "sample_len": self.sample_len,
             "request_b64": self.request_b64, "steps": list(self.steps),
             "script": self.script, "file_name": self.file_name,
         }
 
 
-# --------------------------------------------------------------------- 字节归属
-
-def _accounting(front: str, back: str, payload: bytes) -> ChainEvidence | None:
-    """两侧都是参照实现时才能算字节归属；真实产品要靠拓扑里的链路复现。"""
-    try:
-        evidence = chain_evidence(payload, reference.policy_of(front),
-                                  reference.policy_of(back), front, back)
-    except KeyError:
-        return None
-    return evidence
-
-
-def _steps(scenario: templates.Scenario, values: dict) -> tuple[str, ...]:
-    return tuple(step.format(**values) for step in scenario.steps)
-
+# --------------------------------------------------------------------- 步骤
 
 _FALLBACK_STEPS = (
     "确认链路方向：客户端 → {front} → {back}",
     "把下面的最小复现样本原样发给 {front}",
-    "两侧含非本地实现，本机无法量化字节归属 —— "
+    "两侧含非本地实现或无法量化，本机算不出错位量 —— "
     "请在真实拓扑上按 §3.5 的方式复现，观察两侧观测差异",
     "消融实验证据：{evidence}",
     "修复：{fix}",
 )
 
 
-# --------------------------------------------------------------------- 脚本模板
+def _steps(scenario: templates.Scenario, values: dict) -> tuple[str, ...]:
+    return tuple(step.format(**values) for step in scenario.steps)
 
+
+# --------------------------------------------------------------------- 脚本骨架
+
+#: 跨领域的脚本骨架。{domain_block} 由各领域填"怎么算账 + 怎么断言"。
 _SCRIPT = '''#!/usr/bin/env python3
 """{title}
 
-由 CED 自动生成 —— 用例 {case_id}，场景 {scenario}。
+由 CED 自动生成 —— 用例 {case_id}，场景 {scenario}，领域 {domain}。
 零第三方依赖；放在仓库任意位置都能跑（脚本会自己往上找仓库根目录）。
 
-    python {file_name}                      # 离线：算清字节归属（默认，不联网）
-    python {file_name} --send 127.0.0.1:8080 --i-am-authorized
+    python {file_name}                      # 离线：算清量化指标（默认，不联网）
+    python {file_name} --send HOST:PORT --i-am-authorized
                                             # 真的把最小复现样本发出去（仅限已授权目标）
 
 合规：--send 必须同时给出 --i-am-authorized。只对自有或已授权的目标使用。
@@ -136,25 +138,18 @@ ROOT = _find_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ced.impls import reference                      # noqa: E402
-from ced.orchestrate.chain import chain_evidence     # noqa: E402
+{imports}
 
 CASE_ID = {case_id!r}
 FRONT = {front!r}
 BACK = {back!r}
 PAYLOAD = base64.b64decode({payload_b64!r})
-EXPECT = ({forwarded!r}, {back_consumed!r}, {smuggled!r})
+EXPECT = {expect!r}
 
 
-def accounting() -> tuple[int, int, int] | None:
-    """用两侧的分帧策略算出：前置转发多少 / 后端消费多少 / 夹带多少。"""
-    try:
-        front_policy = reference.policy_of(FRONT)
-        back_policy = reference.policy_of(BACK)
-    except KeyError:
-        return None
-    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)
-    return ev.forwarded, ev.back_consumed, ev.smuggled_len
+def measure():
+    """按两侧的策略算出量化指标。算不出来返回 None。"""
+{measure_body}
 
 
 def main() -> int:
@@ -169,20 +164,12 @@ def main() -> int:
     print(f"链路        {{FRONT}} → {{BACK}}")
     print(f"样本长度    {{len(PAYLOAD)}} 字节")
 
-    got = accounting()
+    got = measure()
+    ok = got is not None
     if got is None:
-        print("字节归属    无法量化（两侧含非本地实现）—— 请在真实拓扑上复现")
+        print("量化        无法计算（两侧含非本地实现）—— 请在真实拓扑上复现")
     else:
-        forwarded, consumed, smuggled = got
-        print(f"前置转发    {{forwarded}} 字节")
-        print(f"后端消费    {{consumed}} 字节")
-        print(f"被夹带      {{smuggled}} 字节")
-        if EXPECT[0] is not None:
-            ok = got == EXPECT
-            print(f"断言        {{'PASS' if ok else 'FAIL'}}（期望 {{EXPECT}}）")
-            if not ok:
-                print("说明        期望值来自生成时的实现；不一致说明复现条件已变，")
-                print("            请重新跑一次 scan 生成新的 PoC，而不是改期望值。")
+{report_body}
 
     if args.send:
         if not args.i_am_authorized:
@@ -200,23 +187,73 @@ def main() -> int:
                     break
                 response += chunk
         print(f"已发送      {{args.send}}，收到 {{len(response)}} 字节响应")
-        print("提示        走私的效果要看**下一条请求**，单次发送看不到；"
-              "请在后端日志或探针视角里确认被夹带的字节。")
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
 
+#: 分帧领域：算"前置转发多少 / 后端消费多少 / 夹带多少"
+_FRAMING_BLOCK = {
+    "imports": ("from ced.impls import reference\n"
+                "from ced.orchestrate.chain import chain_evidence"),
+    "measure_body": (
+        "    try:\n"
+        "        front_policy = reference.policy_of(FRONT)\n"
+        "        back_policy = reference.policy_of(BACK)\n"
+        "    except KeyError:\n"
+        "        return None\n"
+        "    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n"
+        "    return ev.forwarded, ev.back_consumed, ev.smuggled_len"),
+    "report_body": (
+        "        forwarded, consumed, smuggled = got\n"
+        "        print(f\"前置转发    {forwarded} 字节\")\n"
+        "        print(f\"后端消费    {consumed} 字节\")\n"
+        "        print(f\"被夹带      {smuggled} 字节\")\n"
+        "        if EXPECT[0] is not None:\n"
+        "            ok = got == tuple(EXPECT)\n"
+        "            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")"),
+}
 
-def _render_script(poc_parts: dict) -> str:
-    return _SCRIPT.format(**poc_parts)
+#: 路径归一化领域：算"前置认的资源 / 后端认的资源"
+_URL_BLOCK = {
+    "imports": ("from ced.impls import url_reference\n"
+                "from ced.impls.path_norm import normalize_target"),
+    "measure_body": (
+        "    try:\n"
+        "        front_policy = url_reference.policy_of(FRONT)\n"
+        "        back_policy = url_reference.policy_of(BACK)\n"
+        "    except KeyError:\n"
+        "        return None\n"
+        "    front_res = normalize_target(PAYLOAD, front_policy)\n"
+        "    forwarded = PAYLOAD\n"
+        "    if front_policy.forward_form == \"normalized\":\n"
+        "        forwarded = front_res.norm_path.encode(\"latin-1\")\n"
+        "    back_res = normalize_target(forwarded, back_policy)\n"
+        "    return front_res.norm_path, back_res.norm_path"),
+    "report_body": (
+        "        front_path, back_path = got\n"
+        "        print(f\"前置认的资源  {front_path}\")\n"
+        "        print(f\"后端认的资源  {back_path}\")\n"
+        "        print(f\"资源错位      {'是' if front_path != back_path else '否'}\")\n"
+        "        ok = (front_path != back_path) == bool(EXPECT[0])\n"
+        "        expect_mismatch = EXPECT[0] != EXPECT[1]\n"
+        "        print(f\"断言        {'PASS' if ok else 'FAIL'}\"\n"
+        "              f\"（期望错位={expect_mismatch}）\")"),
+}
+
+_BLOCKS = {"http1-framing": _FRAMING_BLOCK, "url-norm": _URL_BLOCK}
+
+
+def _render_script(*, domain: str, quant: Quantified | None, **common) -> str:
+    block = _BLOCKS.get(domain, _FRAMING_BLOCK)
+    return _SCRIPT.format(domain=domain, **block, **common)
 
 
 # --------------------------------------------------------------------- 对外接口
 
-def build_poc(finding, *, topo_desc: str = "") -> Poc | None:
+def build_poc(finding, *, domain: str = DEFAULT_DOMAIN) -> Poc | None:
     """为一条发现生成 PoC。**只对 security 级生成**，其余返回 None。"""
     verdict = finding.verdict
     if not verdict.is_security:
@@ -228,39 +265,37 @@ def build_poc(finding, *, topo_desc: str = "") -> Poc | None:
     template = templates.get(verdict.scenario)
     evidence = verdict.ablation or "（未定位到可控承载 —— 该分歧本不该判为安全级，请复核）"
 
-    evidence_obj = _accounting(divergence.left.impl_id, divergence.right.impl_id,
-                               payload)
-    values = {
+    adapter = get_adapter(domain)
+    quant = adapter.quantify(payload, divergence.left.impl_id,
+                             divergence.right.impl_id)
+
+    values: dict = {
         "front": divergence.left.impl_id,
         "back": divergence.right.impl_id,
         "cwe": verdict.cwe or "—",
         "evidence": evidence,
         "fix": verdict.fix or "—",
-        "forwarded": evidence_obj.forwarded if evidence_obj else "未知",
-        "back_consumed": evidence_obj.back_consumed if evidence_obj else "未知",
-        "smuggled": evidence_obj.smuggled_len if evidence_obj else "未知",
     }
+    if quant is not None:
+        values.update({k: v for k, v in quant.values.items()})
 
-    steps = (_steps(template, values) if evidence_obj is not None
-             else tuple(step.format(**values) for step in _FALLBACK_STEPS))
+    if quant is not None:
+        steps = _steps(template, values)
+    else:
+        steps = tuple(step.format(**values) for step in _FALLBACK_STEPS)
 
-    numbers = None
-    if evidence_obj is not None:
-        numbers = (evidence_obj.forwarded, evidence_obj.back_consumed,
-                   evidence_obj.smuggled_len)
-
-    script = _render_script({
-        "title": template.title,
-        "case_id": finding.case_id,
-        "scenario": template.name,
-        "file_name": f"{POC_PREFIX}{finding.case_id}.py",
-        "front": divergence.left.impl_id,
-        "back": divergence.right.impl_id,
-        "payload_b64": base64.b64encode(payload).decode(),
-        "forwarded": numbers[0] if numbers else None,
-        "back_consumed": numbers[1] if numbers else None,
-        "smuggled": numbers[2] if numbers else None,
-    })
+    script = _render_script(
+        domain=domain,
+        quant=quant,
+        title=template.title,
+        case_id=finding.case_id,
+        scenario=template.name,
+        file_name=f"{POC_PREFIX}{finding.case_id}.py",
+        front=divergence.left.impl_id,
+        back=divergence.right.impl_id,
+        payload_b64=base64.b64encode(payload).decode(),
+        expect=tuple(quant.numbers or ()) if quant is not None else (None,),
+    )
 
     return Poc(
         case_id=finding.case_id,
@@ -271,16 +306,13 @@ def build_poc(finding, *, topo_desc: str = "") -> Poc | None:
         left=divergence.left.impl_id,
         right=divergence.right.impl_id,
         axis=divergence.axis,
+        domain=domain,
         impact=template.impact,
         fix=verdict.fix or "—",
         evidence=evidence,
-        chain_desc=(finding.chain_evidence
-                    or (evidence_obj.describe() if evidence_obj else
-                        "（未量化：两侧含非本地实现）")),
-        forwarded=numbers[0] if numbers else None,
-        back_consumed=numbers[1] if numbers else None,
-        smuggled_len=numbers[2] if numbers else None,
-        verified=evidence_obj is not None,
+        chain_desc=finding.chain_evidence or (
+            quant.describe if quant is not None else "（未量化：两侧含非本地实现）"),
+        quant=quant,
         original_len=finding.original_len or len(divergence.payload),
         sample_len=len(payload),
         request_b64=base64.b64encode(payload).decode(),
@@ -290,13 +322,17 @@ def build_poc(finding, *, topo_desc: str = "") -> Poc | None:
 
 
 def build_pocs(result) -> list[Poc]:
-    """一次扫描里所有 security 级发现的 PoC，按 case_id 去重。"""
+    """一次扫描里所有 security 级发现的 PoC，按 case_id 去重。
+
+    领域从 ``ScanResult.domain`` 取 —— 调用方不需要知道这件事。
+    """
+    domain = getattr(result, "domain", "") or DEFAULT_DOMAIN
     out: list[Poc] = []
     seen: set[str] = set()
     for finding in result.findings:
         if finding.case_id in seen:
             continue
-        poc = build_poc(finding)
+        poc = build_poc(finding, domain=domain)
         if poc is None:
             continue
         seen.add(finding.case_id)
@@ -317,4 +353,5 @@ def write_pocs(result, out_dir: str | Path) -> list[Path]:
     return written
 
 
-__all__ = ["Poc", "POC_PREFIX", "build_poc", "build_pocs", "write_pocs"]
+__all__ = ["Poc", "POC_PREFIX", "DEFAULT_DOMAIN", "build_poc", "build_pocs",
+           "write_pocs"]

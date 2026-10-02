@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import random
 
-from ..contracts import DEFAULT_COMPARE_KEYS, ImplSpec
+from ..classify.upgradability import ablate_headers
+from ..contracts import DEFAULT_COMPARE_KEYS, ImplSpec, Quantified
 from ..impls import reference
 from ..mutate import axes, engine
+from ..minimize.ddmin import minimize_headers
+from ..orchestrate.chain import chain_evidence
 
 # ---- 分歧类型（判定器按此升级/降级）----
 KIND_FRAMING_BOUNDARY = "framing_boundary"          # 消费字节数不同 —— 走私的结构性前提
@@ -80,7 +83,13 @@ class Http1FramingAdapter:
                rng: random.Random) -> list[tuple[str, bytes]]:
         return self._mutator.expand(cases, rng)
 
-    # ---------------------------------------------------------------- 分类
+    # ---------------------------------------------------------------- 最小化
+
+    def minimize(self, payload: bytes, predicate) -> bytes:
+        """分帧领域的最小化单元是**请求头行**（请求行与头/体分隔保持不动）。"""
+        return minimize_headers(payload, predicate)
+
+    # ---------------------------------------------------------------- 分类与消融
 
     def classify(self, diff_keys: list[str]) -> str:
         """按**精确字段名**分类。
@@ -95,3 +104,33 @@ class Http1FramingAdapter:
         if keys & {"accepted", "status"}:
             return KIND_ACCEPTANCE
         return KIND_SYNTAX_DETAIL
+
+    def ablate(self, div, evaluate) -> list[str]:
+        """承载分歧的可控字节：逐条移除请求头 / 规范化请求行。
+
+        分帧领域的消融实验，实现在 ``classify.upgradability.ablate_headers`` ——
+        消融的**设计**是领域知识，所以由适配器提供；判定器只消费它的结论。
+        """
+        return ablate_headers(div.payload, div, evaluate, self.compare_keys)
+
+    # ---------------------------------------------------------------- 量化
+
+    def quantify(self, payload: bytes, left_id: str, right_id: str):
+        """量化：前置转发出去的字节里，后端只消费了多少 —— 差额即被夹带字节数。"""
+        try:
+            front = reference.policy_of(left_id)
+            back = reference.policy_of(right_id)
+        except KeyError:
+            return None        # 含真实产品，本机无法量化
+        evidence = chain_evidence(payload, front, back, left_id, right_id)
+        return Quantified(
+            label="被夹带字节数",
+            describe=evidence.describe(),
+            values={"front": left_id, "back": right_id,
+                    "forwarded": evidence.forwarded,
+                    "back_consumed": evidence.back_consumed,
+                    "smuggled": evidence.smuggled_len},
+            numbers=(evidence.forwarded, evidence.back_consumed,
+                     evidence.smuggled_len),
+            verified=True,
+        )

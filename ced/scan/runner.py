@@ -68,11 +68,11 @@ def _calibrate_handwritten(emit, adapter, evaluator, conn) -> None:
 def _llm_proposals(emit, adapter, evaluator, conn, *, want: int = 8
                    ) -> list[tuple[str, bytes]]:
     """向模型要一批提案，逐条过两道门槛，返回通过准入实验的候选语料。"""
+    from ..adapters.base import axis_names
     from ..assist.client import LlmClient, config_from_env
     from ..assist.compile import admit as admit_proposals
     from ..assist.ledger import record_many, record_rejected
     from ..assist.propose import propose as propose_axes
-    from ..mutate import axes
 
     client = LlmClient(config_from_env())
     if not client.available:
@@ -82,7 +82,7 @@ def _llm_proposals(emit, adapter, evaluator, conn, *, want: int = 8
         return []
 
     proposals, rejected, _raw = propose_axes(
-        client, adapter_name=adapter.name, n=want, existing_axes=axes.AXES,
+        client, adapter_name=adapter.name, n=want, existing_axes=axis_names(adapter),
         history=store.proposal_history_brief(conn))
     for item in rejected:
         record_rejected(conn, item)
@@ -130,7 +130,7 @@ def run_job(job: ScanJob, *, db: str | None = None) -> None:
     conn = None
     try:
         adapter = get_adapter(job.domain)
-        topo = load(job.topology) if job.topology else demo()
+        topo = load(job.topology) if job.topology else demo(job.domain)
         evaluator = Evaluator(topo.impls)
         job.total_jobs = len(plan_jobs(adapter, list(evaluator.specs), job.mode))
         job.emit({"type": "stage", "stage": "topology", "detail": topo.describe()})

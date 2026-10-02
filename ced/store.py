@@ -65,16 +65,16 @@ CREATE TABLE IF NOT EXISTS poc (
     poc_id        INTEGER PRIMARY KEY,
     case_id       TEXT NOT NULL,
     divergence_id INTEGER,
-    scenario      TEXT NOT NULL,          -- desync | bypass | generic
+    domain        TEXT,
+    scenario      TEXT NOT NULL,          -- desync | bypass | authz | generic
     title         TEXT,
     level         TEXT,
     cwe           TEXT,
     left_impl     TEXT,
     right_impl    TEXT,
-    forwarded     INTEGER,                -- 前置转发字节数（无法量化时为 NULL）
-    back_consumed INTEGER,                -- 后端消费字节数
-    smuggled_len  INTEGER,                -- 被夹带字节数
-    verified      INTEGER NOT NULL DEFAULT 0,   -- 字节归属是否已由链式模型量化
+    quant_label   TEXT,                   -- 量化指标名（分帧=被夹带字节数；路径=资源错位）
+    quant_json    TEXT,                   -- JSON: {label, describe, values, numbers, verified}
+    verified      INTEGER NOT NULL DEFAULT 0,   -- 量化是否真的算出来了
     script_path   TEXT,
     script        TEXT,
     steps         TEXT,                   -- JSON: 复现步骤
@@ -107,7 +107,20 @@ def connect(path: str | Path) -> sqlite3.Connection:
         p.parent.mkdir(parents=True, exist_ok=True)     # ← 不因父目录缺失而崩
     conn = sqlite3.connect(p)
     conn.executescript(SCHEMA)
+    _ensure_poc_shape(conn)
     return conn
+
+
+def _ensure_poc_shape(conn: sqlite3.Connection) -> None:
+    """``poc`` 表的列在开发中变过形（从分帧专用字段改成通用的量化字段）。
+
+    它是**产物表**：随时可由 ``scan`` 重建。所以形状不对就重建，
+    而不是留着旧结构让 INSERT 报错。
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(poc)")}
+    if cols and cols != set(_POC_COLS):
+        conn.execute("DROP TABLE poc")
+        conn.executescript(SCHEMA)
 
 
 def open_fresh(path: str | Path) -> sqlite3.Connection:
@@ -250,10 +263,9 @@ def proposal_history_brief(conn: sqlite3.Connection, limit: int = 12) -> str:
 
 # --------------------------------------------------------------------- 攻击场景 PoC
 
-_POC_COLS = ("case_id", "divergence_id", "scenario", "title", "level", "cwe",
-             "left_impl", "right_impl", "forwarded", "back_consumed",
-             "smuggled_len", "verified", "script_path", "script", "steps",
-             "request_b64", "ts")
+_POC_COLS = ("case_id", "divergence_id", "domain", "scenario", "title", "level",
+             "cwe", "left_impl", "right_impl", "quant_label", "quant_json",
+             "verified", "script_path", "script", "steps", "request_b64", "ts")
 
 
 def save_pocs(conn: sqlite3.Connection, pocs, *, script_dir: str | None = None
@@ -266,15 +278,17 @@ def save_pocs(conn: sqlite3.Connection, pocs, *, script_dir: str | None = None
             (poc.case_id,)).fetchone()
         script_path = (str(Path(script_dir) / poc.file_name)
                        if script_dir else None)
+        data = poc.to_dict()
+        quant = data.get("quant") or {}
         conn.execute("DELETE FROM poc WHERE case_id = ?", (poc.case_id,))
         conn.execute(
             f"INSERT INTO poc ({', '.join(_POC_COLS)})"
             f" VALUES ({', '.join('?' * len(_POC_COLS))})",
-            (poc.case_id, row[0] if row else None, poc.scenario, poc.title,
-             poc.level, poc.cwe, poc.left, poc.right, poc.forwarded,
-             poc.back_consumed, poc.smuggled_len, int(poc.verified),
-             script_path, poc.script, json.dumps(list(poc.steps),
-                                                 ensure_ascii=False),
+            (poc.case_id, row[0] if row else None, poc.domain, poc.scenario,
+             poc.title, poc.level, poc.cwe, poc.left, poc.right,
+             quant.get("label"), json.dumps(quant, ensure_ascii=False),
+             int(poc.verified), script_path, poc.script,
+             json.dumps(list(poc.steps), ensure_ascii=False),
              poc.request_b64, time.time()))
         written += 1
     conn.commit()
@@ -301,6 +315,10 @@ def _poc_row(row: dict) -> dict:
         row["steps"] = json.loads(row.get("steps") or "[]")
     except (TypeError, ValueError):
         row["steps"] = []
+    try:
+        row["quant"] = json.loads(row.get("quant_json") or "null")
+    except (TypeError, ValueError):
+        row["quant"] = None
     return row
 
 

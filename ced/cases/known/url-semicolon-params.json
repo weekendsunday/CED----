@@ -1,0 +1,14 @@
+{
+  "id": "url-semicolon-params",
+  "domain": "url-norm",
+  "axis": "path_semicolon",
+  "left": "url-gateway",
+  "right": "url-strip-semicolon",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "payload_b64": "L2FkbWluO3g9L3B1Yg==",
+  "reference": "Tomcat 等把 `;` 之后当矩阵参数丢掉",
+  "note": "同一段 `/admin;x=/pub`：RFC 口径的前置把 `;x=` 当段内普通字符，认成 `/admin;x=/pub`；Tomcat 口径的后端把 `;x=` 当矩阵参数剥掉，认成 `/admin/pub`。前者据此做鉴权、后者据此路由，可能绕过 `/admin` 前缀规则。"
+}

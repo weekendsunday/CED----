@@ -1,0 +1,14 @@
+{
+  "id": "url-duplicate-slash",
+  "domain": "url-norm",
+  "axis": "path_slash_collapse",
+  "left": "url-gateway",
+  "right": "url-collapse-slash",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "payload_b64": "Ly9hZG1pbg==",
+  "reference": "RFC 3986 不要求折叠连续斜杠",
+  "note": "同一段 `//admin`：RFC 口径的前置保留连续斜杠，认成 `//admin`（不是绝对路径 `/admin`）；不少框架会折叠成单斜杠，认成 `/admin`。鉴权前缀匹配与后端路由可能落在不同资源上（协议相对 URL 解释 / 路由绕过）。"
+}

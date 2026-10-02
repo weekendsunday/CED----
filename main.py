@@ -36,6 +36,7 @@ TEST_FILES = (
     "ced/tests/test_scenario.py",
     "ced/tests/test_metrics_web.py",
     "ced/tests/test_agent.py",
+    "ced/tests/test_url_norm.py",
 )
 
 

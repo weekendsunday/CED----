@@ -1,0 +1,15 @@
+{
+  "id": "url-backslash",
+  "domain": "url-norm",
+  "axis": "path_backslash",
+  "left": "url-gateway",
+  "right": "url-backslash-sep",
+  "expect_kind": "path_traversal",
+  "expect_fields": [
+    "norm_path",
+    "traversal"
+  ],
+  "payload_b64": "L2FkbWluXC4uXHB1Yg==",
+  "reference": "RFC 3986 中反斜杠是普通 pchar；Windows/IIS 把 `\\` 当路径分隔符（非 RFC 行为）",
+  "note": "同一段 `/admin\\..\\pub`：RFC 口径的前置把反斜杠当普通字符，整串是一个段、不解算，认成 `/admin\\..\\pub`；Windows/IIS 口径的后端把 `\\` 换成 `/`，于是出现真点段并解算成 `/pub`。二者认成不同资源。"
+}

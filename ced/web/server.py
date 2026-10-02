@@ -216,11 +216,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
     # ----------------------------------------------------------------- 业务
-    def _evaluator(self, topology_path: str):
+    def _evaluator(self, topology_path: str, domain: str = "http1-framing"):
         if topology_path:
             topo = load(topology_path)
         else:
-            topo = demo()
+            topo = demo(domain)
         return topo, Evaluator(topo.impls)
 
     def _probe(self, body: dict) -> None:
@@ -235,12 +235,16 @@ class Handler(BaseHTTPRequestHandler):
                 {"error": f"文件太大（{len(payload)} 字节 > {MAX_PAYLOAD}）——"
                           f"本工具面向单条请求，不是整个流量包"}, 400)
 
+        domain = (body.get("domain") or "http1-framing").strip()
+        if domain not in ADAPTERS:
+            return self._json(
+                {"error": f"未知领域：{domain}（可选：{', '.join(sorted(ADAPTERS))}）"}, 400)
         try:
-            topo, evaluator = self._evaluator((body.get("topology") or "").strip())
+            topo, evaluator = self._evaluator((body.get("topology") or "").strip(), domain)
         except Exception as exc:
             return self._json({"error": f"拓扑文件读不了：{exc}"}, 400)
 
-        adapter = get_adapter("http1-framing")
+        adapter = get_adapter(domain)
 
         if body.get("mode") == "pair":
             left, right = body.get("left"), body.get("right")
@@ -410,11 +414,16 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ 提案台账
     def _assist_propose(self, body: dict) -> None:
         try:
+            from ..adapters.base import axis_names
             from ..assist.client import LlmClient, config_from_env
             from ..assist.compile import admit as admit_proposals
             from ..assist.ledger import record_many, record_rejected
             from ..assist.propose import propose as propose_axes
-            from ..mutate import axes
+
+            domain = (body.get("domain") or "http1-framing").strip()
+            if domain not in ADAPTERS:
+                return self._json(
+                    {"error": f"未知领域：{domain}（可选：{', '.join(sorted(ADAPTERS))}）"}, 400)
         except ImportError as exc:
             return self._json(
                 {"error": f"提案层不可用（{exc}）—— 扫描不受影响"}, 400)
@@ -429,12 +438,13 @@ class Handler(BaseHTTPRequestHandler):
         if not client.available:
             return self._json({"error": _assist_status()["reason"]}, 400)
 
-        adapter = get_adapter("http1-framing")
-        evaluator = Evaluator(demo().impls)
+        adapter = get_adapter(domain)
+        evaluator = Evaluator(demo(domain).impls)
         conn = store.connect(scan_runner.db_path())
         try:
             proposals, rejected, raw = propose_axes(
-                client, adapter_name=adapter.name, n=n, existing_axes=axes.AXES,
+                client, adapter_name=adapter.name, n=n,
+                existing_axes=axis_names(adapter),
                 history=store.proposal_history_brief(conn))
             for item in rejected:
                 record_rejected(conn, item)

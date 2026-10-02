@@ -42,7 +42,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         adapter = get_adapter(args.domain)
     except KeyError as exc:
         raise SystemExit(f"[!] {exc}") from exc
-    topo = load(args.topology) if args.topology else demo()
+    topo = load(args.topology) if args.topology else demo(args.domain)
     if args.mode:
         topo_mode = args.mode
     else:
@@ -235,7 +235,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     if not payload:
         raise SystemExit("[!] 输入为空")
 
-    topo = load(args.topology) if args.topology else demo()
+    topo = load(args.topology) if args.topology else demo(args.domain)
     adapter = get_adapter(args.domain)
     evaluator = Evaluator(topo.impls)
 
@@ -308,7 +308,7 @@ def _cmd_poc(args: argparse.Namespace) -> int:
     except KeyError as exc:
         raise SystemExit(f"[!] {exc}") from exc
 
-    topo = load(args.topology) if args.topology else demo()
+    topo = load(args.topology) if args.topology else demo(args.domain)
     evaluator = Evaluator(topo.impls)
     try:
         result = scan(adapter, evaluator, mode=args.mode, limit=args.limit,
@@ -374,7 +374,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     from .scenario import build_pocs, write_pocs
 
     adapter = get_adapter(args.domain)
-    topo = load(args.topology) if args.topology else demo()
+    topo = load(args.topology) if args.topology else demo(args.domain)
     evaluator = Evaluator(topo.impls)
 
     client = LlmClient(config_from_env())
@@ -440,11 +440,11 @@ def _cmd_assist(args: argparse.Namespace) -> int:
 
     与扫描完全解耦 —— 没有模型时这条命令只是告诉你"没配"，不影响任何扫描路径。
     """
+    from .adapters.base import axis_names
     from .assist import compile as acompile
     from .assist import ledger as aledger
     from .assist import propose as apropose
     from .assist.client import LlmClient, config_from_env
-    from .mutate import axes
     from .scan import runner as scan_runner
 
     cfg = config_from_env()
@@ -468,11 +468,11 @@ def _cmd_assist(args: argparse.Namespace) -> int:
         if args.propose:
             if not client.available:
                 raise SystemExit("[!] 未配置模型，无法提案。用 python -m ced assist 查看状态。")
-            adapter = get_adapter("http1-framing")
-            evaluator = Evaluator(demo().impls)
+            adapter = get_adapter(args.domain)
+            evaluator = Evaluator(demo(args.domain).impls)
             proposals, rejected, _raw = apropose.propose(
                 client, adapter_name=adapter.name, n=args.propose,
-                existing_axes=axes.AXES,
+                existing_axes=axis_names(adapter),
                 history=store.proposal_history_brief(conn))
             for item in rejected:
                 aledger.record_rejected(conn, item)
@@ -540,17 +540,37 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_impls(_: argparse.Namespace) -> int:
-    from .impls.reference import BASE, REFERENCES
-    print("参照实现（runner=local）：")
-    for name, pol in REFERENCES.items():
-        delta = {k: v for k, v in pol.__dict__.items()
-                 if k != "name" and BASE.get(k) != v}
-        print(f"  {name:<24} 偏离基线: {delta or '(基线本身)'}")
-    print("\n定向对照：")
-    for axis, (l, r) in reference.AXIS_PAIRS.items():
-        print(f"  {axis:<18} {l} ↔ {r}")
+def _cmd_impls(args: argparse.Namespace) -> int:
+    from .impls import LOCAL_AXIS_PAIRS, LOCAL_PARSERS, LOCAL_SPECS
+
+    domains = ([args.domain] if getattr(args, "domain", None)
+               else sorted(LOCAL_PARSERS))
+    for domain in domains:
+        print(f"=== 领域 {domain} ===")
+        for spec in LOCAL_SPECS[domain]():
+            policy = local_policy(domain, spec.impl_id)
+            delta = {k: v for k, v in policy.__dict__.items()
+                     if k != "name" and _base_of(domain).get(k) != v}
+            print(f"  {spec.impl_id:<26} 偏离基线: {delta or '(基线本身)'}")
+        print("\n  定向对照：")
+        for axis, (left, right) in LOCAL_AXIS_PAIRS[domain].items():
+            print(f"    {axis:<20} {left} ↔ {right}")
+        print()
     return 0
+
+
+def local_policy(domain: str, impl_id: str):
+    if domain == "url-norm":
+        from .impls import url_reference
+        return url_reference.policy_of(impl_id)
+    return reference.policy_of(impl_id)
+
+
+def _base_of(domain: str) -> dict:
+    if domain == "url-norm":
+        from .impls import url_reference
+        return url_reference.BASE
+    return reference.BASE
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -616,7 +636,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--show", action="store_true", help="即使无分歧也打印两侧观测")
     p.set_defaults(func=_cmd_probe)
 
-    i = sub.add_parser("impls", help="列出参照实现与定向对照")
+    i = sub.add_parser("impls", help="列出参照实现与定向对照（默认两个领域都列）")
+    i.add_argument("--domain", default=None, choices=sorted(ADAPTERS),
+                   help="只看某个领域")
     i.set_defaults(func=_cmd_impls)
 
     pc = sub.add_parser("agent", help="闭环 agent：模型看着执行结果决定下一步往哪搜（判定仍在内核）")
@@ -653,6 +675,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--propose", type=int, metavar="N",
                    help="向模型要 N 条提案，逐条跑差分 oracle 准入实验")
     a.add_argument("--ledger", action="store_true", help="查看提案命中率台账")
+    a.add_argument("--domain", default="http1-framing", choices=sorted(ADAPTERS),
+                   help="按哪个领域向模型要提案")
     a.set_defaults(func=_cmd_assist)
     return ap
 

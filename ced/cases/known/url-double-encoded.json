@@ -1,0 +1,15 @@
+{
+  "id": "url-double-encoded",
+  "domain": "url-norm",
+  "axis": "path_double_decode",
+  "left": "url-gateway",
+  "right": "url-decode-twice",
+  "expect_kind": "path_traversal",
+  "expect_fields": [
+    "norm_path",
+    "traversal"
+  ],
+  "payload_b64": "L3B1Yi8lMjUyRSUyNTJFL2FkbWlu",
+  "reference": "双重百分号编码需第二层解码才现形（本轴刻选用大写十六进制）",
+  "note": "同一段 `/pub/%252E%252E/admin`：只解一层的前置解出 `/pub/%2E%2E/admin`（仍是编码态，不跨目录）；解两层的后端把 `%252E` 先解成 `%2E` 再解成 `.`，得到真 `..` 并解算成 `/admin`。二者认成不同资源，且后端视角发生了跨目录。"
+}

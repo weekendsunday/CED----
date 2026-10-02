@@ -44,6 +44,7 @@ def _parse(text: str, suffix: str) -> dict:
 def load(path: str | Path) -> Topology:
     p = Path(path)
     raw = _parse(p.read_text(encoding="utf-8"), p.suffix.lower())
+    default_domain = raw.get("domain", "http1-framing")
 
     impls: list[ImplSpec] = []
     for node in raw.get("impls", []):
@@ -53,6 +54,7 @@ def load(path: str | Path) -> Topology:
             version=str(node.get("version", "")),
             role=node.get("role", "solo"),
             runner=node.get("runner", "local"),
+            domain=node.get("domain") or default_domain,
             policy=node.get("policy"),
             endpoint=node.get("endpoint"),
             probe_api=node.get("probe_api"),
@@ -74,8 +76,16 @@ def load(path: str | Path) -> Topology:
                     impls=impls, chain=chain)
 
 
-def demo() -> Topology:
-    """内置拓扑：全部参照实现，链路取 CL 优先 → TE 优先（经典 CL.TE 走私结构）。"""
-    return Topology(domain="http1-framing",
-                    impls=reference.specs(),
-                    chain=("ref-cl-first", "ref-te-first"))
+def demo(domain: str = "http1-framing") -> Topology:
+    """内置拓扑：**某个领域**的全部参照实现。
+
+    链路取该领域第一条定向对照 —— 分帧领域是 CL 优先 → TE 优先（经典 CL.TE 走私结构），
+    路径领域是解算 `..` → 保留 `..`（经典穿越结构）。
+    """
+    from ..impls import axis_pairs, local_specs
+
+    specs = local_specs(domain)
+    pairs = axis_pairs(domain)
+    chain = next(iter(pairs.values())) if pairs else (
+        specs[0].impl_id, specs[1].impl_id)
+    return Topology(domain=domain, impls=specs, chain=chain)

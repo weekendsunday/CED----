@@ -12,9 +12,6 @@ from dataclasses import dataclass, field
 from .classify.upgradability import judge
 from .contracts import Divergence, Finding
 from .differ.comparator import compare, diff_keys
-from .impls import reference
-from .minimize.ddmin import minimize_headers
-from .orchestrate.chain import chain_evidence
 from .probe.errors import ProbeRejected
 
 
@@ -71,6 +68,8 @@ class ScanResult:
     proposed_cases: int = 0
     #: 参与本次扫描的全部实现 id（热力图需要完整矩阵，而不只是出过分歧的对）
     impl_ids: list[str] = field(default_factory=list)
+    #: 本次扫描的领域适配器名 —— 决定 PoC 量化口径与报告口径
+    domain: str = ""
     #: 前置按自身策略拒绝、因而**不可观测**的用例数（跳过，不合成观测）
     rejected_cases: int = 0
 
@@ -107,7 +106,8 @@ def scan(adapter, evaluator, *, mode: str = "axis", limit: int | None = None,
                         jobs=len(jobs),
                         compare_keys=tuple(adapter.compare_keys),
                         proposed_cases=len(proposed),
-                        impl_ids=list(impl_ids))
+                        impl_ids=list(impl_ids),
+                        domain=adapter.name)
 
     def run_case(left_id: str, right_id: str, axis: str, payload: bytes) -> None:
         try:
@@ -135,23 +135,22 @@ def scan(adapter, evaluator, *, mode: str = "axis", limit: int | None = None,
                 rv = evaluator(right_id, candidate)
                 return bool(diff_keys(lv, rv, adapter.compare_keys))
 
-            minimized = minimize_headers(payload, keeps_divergence)
+            minimized = adapter.minimize(payload, keeps_divergence)
             finding.minimized = minimized
             finding.minimized_len = len(minimized)
 
         if verdict.is_security:
-            # 链式复现必须针对**这条发现自己的那一对**，而不是拓扑里固定的链路，
+            # 链路量化必须针对**这条发现自己的那一对**，而不是拓扑里固定的链路，
             # 否则会出现"安全级发现"配着"两侧理解一致"的自相矛盾。
+            # 量化口径是**领域知识**（分帧=被夹带字节数，路径=资源错位），故由适配器给出。
             specs = evaluator.specs
             fspec, bspec = specs.get(left_id), specs.get(right_id)
             if (fspec is not None and bspec is not None
                     and fspec.runner == "local" and bspec.runner == "local"):
-                evidence = chain_evidence(
-                    finding.minimized or payload,
-                    reference.policy_of(fspec.policy or left_id),
-                    reference.policy_of(bspec.policy or right_id),
-                    left_id, right_id)
-                finding.chain_evidence = evidence.describe()
+                quantified = adapter.quantify(finding.minimized or payload,
+                                              left_id, right_id)
+                if quantified is not None:
+                    finding.chain_evidence = quantified.describe
 
         result.findings.append(finding)
 

@@ -1,0 +1,14 @@
+{
+  "id": "url-trailing-dot",
+  "domain": "url-norm",
+  "axis": "path_trailing_dot",
+  "left": "url-gateway",
+  "right": "url-strip-trailing",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "payload_b64": "L2FkbWluLg==",
+  "reference": "Windows 文件系统忽略段尾的点与空格",
+  "note": "同一段 `/admin.`：RFC 口径的前置把它当带尾随点的普通段，认成 `/admin.`；Windows 文件系统口径的后端剥掉段尾的点，认成 `/admin`。于是绕过针对 `/admin` 前缀的鉴权或路由规则。"
+}

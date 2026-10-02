@@ -6,10 +6,12 @@
 
 from .base import DomainAdapter
 from .http1_framing import Http1FramingAdapter
+from .url_norm import UrlNormAdapter
 
 #: 领域注册表：名字 → 适配器类
 ADAPTERS: dict[str, type] = {
     Http1FramingAdapter.name: Http1FramingAdapter,
+    UrlNormAdapter.name: UrlNormAdapter,
 }
 
 

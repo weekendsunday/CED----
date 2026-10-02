@@ -865,20 +865,24 @@ function renderScanEvidence(f){
   }
   h += `</div>`;
 
-  /* 链式复现 */
-  h += `<div class="sect"><div class="note"><b>链式复现</b></div>
+  /* 链路量化（各领域口径不同：分帧=被夹带字节数，路径=资源错位） */
+  h += `<div class="sect"><div class="note"><b>链路量化（前置 → 后端）</b></div>
     <div class="kv">${f.chain_evidence ? esc(f.chain_evidence) : '—'}</div></div>`;
 
-  /* 攻击场景与端到端 PoC —— 属"已证实"栏：字节归属由链式模型算出，不是模型说的 */
+  /* 攻击场景与端到端 PoC —— 属"已证实"栏：量化由领域模型算出，不是模型说的 */
   const poc = scanPocs[f.case_id];
   if (poc){
     h += `<div class="sect"><div class="note"><b>攻击场景与复现步骤</b></div>
       <div class="kv"><b>${esc(poc.title)}</b>　<span class="note">${esc(poc.scenario)}　CWE ${esc(poc.cwe || '—')}</span></div>`;
-    if (poc.forwarded === null || poc.forwarded === undefined){
-      h += `<div class="kv warn">字节归属无法量化（两侧含非本地实现）—— 需在真实拓扑上复现</div>`;
+    if (poc.quant && poc.quant.verified){
+      const q = poc.quant;
+      const vals = Object.entries(q.values || {})
+        .filter(([k]) => k !== 'front' && k !== 'back')
+        .map(([k, v]) => `<span class="k">${esc(k)}</span><b>${esc(v)}</b>`).join('　');
+      h += `<div class="kv"><span class="k">${esc(q.label)}</span>${vals}</div>`;
+      h += `<div class="kv">${esc(q.describe)}</div>`;
     } else {
-      h += `<div class="kv"><span class="k">字节归属</span>前置转发 <b>${poc.forwarded}</b> /
-        后端消费 <b>${poc.back_consumed}</b> / 被夹带 <b class="bad">${poc.smuggled_len}</b> 字节</div>`;
+      h += `<div class="kv warn">无法量化（两侧含非本地实现，或本机算不出）—— 需在真实拓扑上复现</div>`;
     }
     h += `<div class="kv"><span class="k">影响</span>${esc(poc.impact)}</div>`;
     h += `<ol style="margin:8px 0 0 18px;padding:0">` +

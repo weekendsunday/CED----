@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 SCENARIO_DESYNC = "desync"
 SCENARIO_BYPASS = "bypass"
+SCENARIO_AUTHZ = "authz"
 SCENARIO_GENERIC = "generic"
 
 
@@ -76,6 +77,33 @@ BYPASS = Scenario(
     quotable=False,
 )
 
+AUTHZ = Scenario(
+    name=SCENARIO_AUTHZ,
+    title="鉴权绕过（路径归一化不一致）",
+    impact=(
+        "前置与后端把同一段请求目标解释成**不同资源字符串**：前置按自己的归一化结果做鉴权、"
+        "后端按自己的归一化结果路由。**若**两者的解算结果指向不同资源，攻击者就能触及"
+        "前置认为他无权触及的那个 —— 鉴权、目录保护、WAF 路径规则全都落在错的对象上。"
+        "注意：字符串不同不等于资源不同（例如根目录下的 `/..` 与 `/` 是同一个资源），"
+        "**是否真的构成绕过，要看两端各自的路由与鉴权规则** —— "
+        "所以这里给出两侧的解算结果与最小复现样本供直接复核。"
+    ),
+    preconditions=(
+        "前置与后端对同一段 target 的归一化口径不一致（本工具已用差分 + 消融实验证明）",
+        "前置的鉴权 / 防护决策建立在自己的归一化结果之上",
+        "后端对转发过来的 target 会再解释一次（重新解码 / 重新归一化）",
+    ),
+    steps=(
+        "确认链路方向：客户端 → {front}（前置，做鉴权） → {back}（后端，做路由）",
+        "把下面的 target 原样发给 {front}",
+        "{front} 把它归一化成 `{norm_front}` —— 它据此判定「允许访问」",
+        "{back} 把同一段字节归一化成 `{norm_back}` —— 它据此路由到**另一个资源**",
+        "两侧解算结果的差别，就是攻击者实际触及、而按前置的判定本不该触及的资源",
+        "修复：{fix}",
+    ),
+    quotable=True,
+)
+
 GENERIC = Scenario(
     name=SCENARIO_GENERIC,
     title="可升级分歧（场景未归类）",
@@ -99,6 +127,7 @@ GENERIC = Scenario(
 SCENARIOS: dict[str, Scenario] = {
     DESYNC.name: DESYNC,
     BYPASS.name: BYPASS,
+    AUTHZ.name: AUTHZ,
     SCENARIO_GENERIC: GENERIC,
 }
 
@@ -112,10 +141,10 @@ def names() -> list[str]:
     return sorted(SCENARIOS)
 
 
-__all__ = ["DESYNC", "BYPASS", "GENERIC", "SCENARIOS", "Scenario", "get", "names",
-           "AUTO_UPGRADED", "SCENARIO_DESYNC", "SCENARIO_BYPASS",
-           "SCENARIO_GENERIC"]
+__all__ = ["DESYNC", "BYPASS", "AUTHZ", "GENERIC", "SCENARIOS", "Scenario",
+           "get", "names", "AUTO_UPGRADED", "SCENARIO_DESYNC",
+           "SCENARIO_BYPASS", "SCENARIO_AUTHZ", "SCENARIO_GENERIC"]
 
 
 #: 真正会被自动升级的场景（其余走通用模板，只给复现不给后果结论）
-AUTO_UPGRADED: tuple[str, ...] = (SCENARIO_DESYNC, SCENARIO_BYPASS)
+AUTO_UPGRADED: tuple[str, ...] = (SCENARIO_DESYNC, SCENARIO_BYPASS, SCENARIO_AUTHZ)

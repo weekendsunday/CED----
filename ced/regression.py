@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .adapters.http1_framing import Http1FramingAdapter
+from .adapters import get as get_adapter
 from .contracts import ImplSpec
 from .differ.comparator import compare
 from .impls import reference
@@ -46,23 +46,26 @@ def _knobs(policy):
     return replace(policy, name="")
 
 
-def _evaluate(adapter: Http1FramingAdapter, spec: dict) -> CaseOutcome:
+def _evaluate(adapter, spec: dict) -> CaseOutcome:
     name = spec["id"]
     left_id, right_id = spec["left"], spec["right"]
 
     try:
-        left_policy = reference.policy_of(left_id)
-        right_policy = reference.policy_of(right_id)
+        left_policy = policy_for(adapter, left_id)
+        right_policy = policy_for(adapter, right_id)
     except KeyError as exc:
         return CaseOutcome(name, False, f"案例引用了不存在的实现：{exc}")
 
     if _knobs(left_policy) == _knobs(right_policy):
         return CaseOutcome(name, False, "对照的两个实现策略完全相同 —— 空转")
 
+    domain = adapter.name
     payload = base64.b64decode(spec["payload_b64"])
     evaluator = Evaluator([
-        ImplSpec(impl_id=left_id, name=left_id, runner="local", policy=left_id),
-        ImplSpec(impl_id=right_id, name=right_id, runner="local", policy=right_id),
+        ImplSpec(impl_id=left_id, name=left_id, runner="local",
+                 policy=left_id, domain=domain),
+        ImplSpec(impl_id=right_id, name=right_id, runner="local",
+                 policy=right_id, domain=domain),
     ])
     left = evaluator(left_id, payload)
     right = evaluator(right_id, payload)
@@ -84,8 +87,30 @@ def _evaluate(adapter: Http1FramingAdapter, spec: dict) -> CaseOutcome:
     return CaseOutcome(name, True, f"{kind} @ {sorted(keys)}")
 
 
+def policy_for(adapter, impl_id: str):
+    """取某个领域里某个参照实现的策略（各领域的注册表不同）。"""
+    if adapter.name == "url-norm":
+        from .impls import url_reference
+        return url_reference.policy_of(impl_id)
+    return reference.policy_of(impl_id)
+
+
 def run(directory: Path | str = CASES_DIR,
         cases: list[dict] | None = None) -> list[CaseOutcome]:
-    adapter = Http1FramingAdapter()
+    """跑全部已知案例。每个案例按自己的 ``domain`` 选适配器（缺省分帧领域）。"""
+    from .adapters import get as get_adapter
+
     cases = cases if cases is not None else load_cases(directory)
-    return [_evaluate(adapter, spec) for spec in cases]
+    adapters: dict[str, object] = {}
+    outcomes: list[CaseOutcome] = []
+    for spec in cases:
+        domain = spec.get("domain", "http1-framing")
+        if domain not in adapters:
+            try:
+                adapters[domain] = get_adapter(domain)
+            except KeyError:
+                outcomes.append(CaseOutcome(
+                    spec.get("id", "?"), False, f"案例引用了不存在的领域：{domain}"))
+                continue
+        outcomes.append(_evaluate(adapters[domain], spec))
+    return outcomes

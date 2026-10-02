@@ -1,0 +1,15 @@
+{
+  "id": "url-encoded-separator",
+  "domain": "url-norm",
+  "axis": "path_decoding",
+  "left": "url-gateway",
+  "right": "url-decode-never",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path",
+    "decoded"
+  ],
+  "payload_b64": "L3B1YiUyRmFkbWlu",
+  "reference": "RFC 3986 §2.1：百分号编码的 `/`（`%2F`）不等于路径分隔符",
+  "note": "同一段 `/pub%2Fadmin`：做归一化的前置解一层解码，把 `%2F` 变成真分隔符，认成 `/pub/admin`（两个段）；不归一化的前置原样转发 `%2F`，后端认成 `/pub%2Fadmin`（一个段）。编码的斜杠是否等于路径分隔符，决定了资源和段数的解释。"
+}

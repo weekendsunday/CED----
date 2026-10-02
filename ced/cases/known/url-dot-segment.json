@@ -1,0 +1,15 @@
+{
+  "id": "url-dot-segment",
+  "domain": "url-norm",
+  "axis": "path_dot_segments",
+  "left": "url-gateway",
+  "right": "url-keep-dots",
+  "expect_kind": "path_traversal",
+  "expect_fields": [
+    "norm_path",
+    "traversal"
+  ],
+  "payload_b64": "L2FkbWluLy4uL3B1Yg==",
+  "reference": "RFC 3986 §5.2.4 remove_dot_segments",
+  "note": "同一段 `/admin/../pub`：前置网关按 RFC 3986 解算 `..`，认成 `/pub`；后端保留点段原样，认成 `/admin/../pub`。前端据此做鉴权、后端据此路由，受保护资源可被跨目录访问。"
+}

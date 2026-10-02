@@ -10,7 +10,6 @@ import itertools
 
 from .classify.upgradability import judge
 from .differ.comparator import compare, diff_keys
-from .minimize.ddmin import minimize_headers
 from .pipeline import case_id_of
 
 
@@ -59,7 +58,7 @@ def analyze(payload: bytes, left_id: str, right_id: str,
             b = evaluator(right_id, candidate)
             return bool(diff_keys(a, b, adapter.compare_keys))
 
-        mini = minimize_headers(payload, keeps_divergence)
+        mini = adapter.minimize(payload, keeps_divergence)
         result["minimized_b64"] = base64.b64encode(mini).decode()
         result["minimized_len"] = len(mini)
         result["minimized_repr"] = repr(mini)

@@ -132,6 +132,25 @@ class TestUpgradability(unittest.TestCase):
             self.assertTrue(keys & structural,
                             f"{f.case_id} 判为 security 但差异字段全非结构字段: {keys}")
 
+    def test_request_line_carried_divergence_is_security(self):
+        """分歧由**请求行**承载时，消融实验也必须能定位到 —— 不能只删请求头。
+
+        否则这类真实的分歧会被保守地判成 unknown（曾经就是这样漏报的）。
+        """
+        payload = (b"POST http://localhost/ HTTP/1.1\r\n"
+                   b"Host: localhost\r\n"
+                   b"Content-Length: 3\r\n"
+                   b"\r\nabc")
+        left = EVAL("ref-cl-first", payload)
+        right = EVAL("ref-loose-request-line", payload)
+        div = compare("x", "request_line", payload, left, right, ADAPTER.compare_keys)
+        self.assertIsNotNone(div, "绝对形式请求目标未被检出")
+        kind = ADAPTER.classify([d.key for d in div.diffs])
+        verdict = judge(div, kind, ADAPTER, EVAL)
+        self.assertEqual(verdict.level, LEVEL_SECURITY)
+        self.assertTrue(verdict.controllable, "请求行承载的分歧未被判定为可控")
+        self.assertIn("请求行", verdict.ablation or "")
+
     def test_diagnostic_only_divergence_is_compat(self):
         """非结构字段的差异（诊断信息）只能到 compatibility。"""
         fields = {k: 1 for k in ADAPTER.compare_keys}

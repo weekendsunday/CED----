@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from ..contracts import (LEVEL_COMPAT, LEVEL_SECURITY, LEVEL_UNKNOWN,
@@ -32,19 +33,62 @@ def _still_diverges(candidate: bytes, div: Divergence,
     return bool(diff_keys(left, right, compare_keys))
 
 
+_ABSOLUTE_TARGET = re.compile(rb"^[A-Za-z][A-Za-z0-9+.\-]*://[^/]*(\S*)$")
+
+
+def _request_line_variants(line: bytes) -> list[bytes]:
+    """请求行的几种"规范化"写法 —— 请求行与请求头一样，都是攻击者直接发送的。"""
+    out: list[bytes] = []
+    collapsed = b" ".join(line.split())
+    if collapsed != line:
+        out.append(collapsed)
+    parts = collapsed.split(b" ")
+    if len(parts) != 3:
+        return out
+    method, target, version = parts
+    if method != method.upper():
+        candidate = b" ".join([method.upper(), target, version])
+        if candidate not in out:
+            out.append(candidate)
+    match = _ABSOLUTE_TARGET.match(target)
+    if match:
+        candidate = b" ".join([method, match.group(1) or b"/", version])
+        if candidate not in out:
+            out.append(candidate)
+    return out
+
+
 def ablate(payload: bytes, div: Divergence, evaluate: Evaluator,
-           compare_keys: tuple[str, ...]) -> list[bytes]:
-    """逐条移除请求头，返回"移除后分歧消失"的那些头行。"""
+           compare_keys: tuple[str, ...]) -> list[str]:
+    """找出「把哪一处改掉，分歧就消失」—— 即这个分歧由谁承载。
+
+    覆盖两类攻击者可直接发送的东西：
+      * 每一条请求头（移除它）
+      * 请求行本身（折叠空白 / 方法大写 / 绝对形式相对化）
+
+    返回人类可读的描述；为空表示定位不到，判定器会保守地给 unknown。
+    """
     msg = httpmsg.split(payload)
     if msg is None:
         return []
-    carriers: list[bytes] = []
+
+    def still_diverges(candidate: bytes) -> bool:
+        return _still_diverges(candidate, div, evaluate, compare_keys)
+
+    carriers: list[str] = []
+
     for index, line in msg.header_lines():
         candidate = httpmsg.drop_line(msg, index).build()
-        if candidate == payload:
-            continue
-        if not _still_diverges(candidate, div, evaluate, compare_keys):
-            carriers.append(line)
+        if candidate != payload and not still_diverges(candidate):
+            carriers.append(f"移除请求头 `{line.decode('latin-1')}`")
+
+    for variant in _request_line_variants(msg.lines[0]):
+        candidate = httpmsg.Message(lines=[variant] + msg.lines[1:],
+                                    eol=msg.eol, sep=msg.sep,
+                                    tail=msg.tail).build()
+        if not still_diverges(candidate):
+            carriers.append(f"把请求行规范化成 `{variant.decode('latin-1')}`")
+
     return carriers
 
 
@@ -56,20 +100,20 @@ def judge(div: Divergence, kind: str, adapter, evaluate: Evaluator) -> Verdict:
     keys = [d.key for d in div.diffs]
 
     # 只有"可能被升级"的类型才跑消融实验 —— 它要对每条请求头重放两侧，不便宜
-    carriers: list[bytes] = []
+    carriers: list[str] = []
     if kind in boundary_kinds or kind == adapter.kind_acceptance:
         carriers = ablate(div.payload, div, evaluate, compare_keys)
     controllable = bool(carriers)
     ablation = None
     if carriers:
-        shown = ", ".join(f"`{c.decode('latin-1')}`" for c in carriers[:3])
-        more = f" 等 {len(carriers)} 条" if len(carriers) > 3 else ""
-        ablation = (f"移除请求头 {shown}{more} 后分歧消失 → "
-                    f"该分歧由攻击者可直接发送的头部承载")
+        shown = "；".join(carriers[:3])
+        more = f"；等 {len(carriers)} 处" if len(carriers) > 3 else ""
+        ablation = (f"{shown}{more} —— 分歧消失，"
+                    f"说明它由攻击者可直接发送的部分承载")
 
     if kind in boundary_kinds and controllable:
         level, reason = LEVEL_SECURITY, (
-            f"消息边界解释分歧（字段 {keys}），且由攻击者可直接发送的请求头承载 "
+            f"消息边界解释分歧（字段 {keys}），且由攻击者可直接发送的部分（请求行/请求头）承载 "
             f"→ 具备请求走私的结构性前提"
         )
     elif kind in boundary_kinds:

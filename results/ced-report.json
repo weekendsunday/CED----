@@ -3,8 +3,8 @@
   "jobs": 8,
   "summary": {
     "by_level": {
-      "security": 11,
-      "unknown": 13
+      "security": 22,
+      "unknown": 2
     },
     "by_kind": {
       "framing_boundary": 24
@@ -18,9 +18,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Content-Length: 03` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Content-Length: 03` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -98,9 +98,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Content-Length: +3` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -138,9 +138,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Content-Length: 0000003` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Content-Length: 0000003` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -178,9 +178,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `CONTENT-LENGTH: +3` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `CONTENT-LENGTH: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -218,9 +218,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Content-Length: 3`, `Content-Length: 4` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Content-Length: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -266,9 +266,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `CONTENT-LENGTH: 3`, `Content-Length: 4` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `CONTENT-LENGTH: 3`；移除请求头 `Content-Length: 4` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -314,9 +314,9 @@
       "right": "ref-lenient-cl",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Content-Length: +3` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Content-Length: +3` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -350,9 +350,9 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 `Host: localhost`, ` injected: fold` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 `Host: localhost`；移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -390,9 +390,9 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 ` injected: fold` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -430,9 +430,9 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 ` injected: fold` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -470,9 +470,9 @@
       "right": "ref-loose-headers",
       "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的请求头承载 → 具备请求走私的结构性前提",
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
       "controllable": true,
-      "ablation": "移除请求头 ` injected: fold` 后分歧消失 → 该分歧由攻击者可直接发送的头部承载",
+      "ablation": "移除请求头 ` injected: fold` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -508,11 +508,11 @@
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -542,21 +542,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiYw==",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
       "original_len": 58,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 41,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "70162be0",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -586,21 +586,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNPTlRFTlQtTEVOR1RIOiAzDQoNCmFiYw==",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDT05URU5ULUxFTkdUSDogMw0KDQphYmM=",
       "original_len": 58,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 41,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "b8f75cf9",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -626,10 +626,10 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiArMw0KDQphYmM=",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogKzMNCg0KYWJj",
       "original_len": 59,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 42,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "4efb4378",
@@ -680,11 +680,11 @@
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -710,21 +710,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiBhYmMNCg0KYWJj",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogYWJjDQoNCmFiYw==",
       "original_len": 60,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 43,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "fc4c74fb",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -750,21 +750,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiAweDMNCkNvbnRlbnQtTGVuZ3RoOiAweDMNCg0KYWJj",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==",
       "original_len": 81,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 43,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "63b954dd",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -790,21 +790,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpoT3NUOiBsb2NhbGhvc3QNCmhPc1Q6IGxvY2FsaG9zdA0KQ29udGVudC1MZW5ndGg6IDB4Mw0KDQphYmM=",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMHgzDQoNCmFiYw==",
       "original_len": 77,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 43,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "c8f519aa",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed', 'leftover_len']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -838,21 +838,21 @@
         ]
       },
       "payload_b64": "UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KQ29udGVudC1MZW5ndGg6IDMNCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiY0dFVCAvc211Z2dsZWQgSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KDQo=",
-      "minimized_b64": null,
+      "minimized_b64": "UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiY0dFVCAvc211Z2dsZWQgSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KDQo=",
       "original_len": 137,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 101,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "c6b4341c",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -882,21 +882,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiAzDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
       "original_len": 77,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 41,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "2204c027",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -926,21 +926,21 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNCkNvbnRlbnQtTGVuZ3RoOiAzDQpDb250ZW50LUxlbmd0aDogMw0KQ29udGVudC1MZW5ndGg6IDMNCg0KYWJj",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpDb250ZW50LUxlbmd0aDogMw0KDQphYmM=",
       "original_len": 96,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 41,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "f2b69e5e",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'cl', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -970,21 +970,21 @@
         ]
       },
       "payload_b64": "UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkhvc3Q6IGxvY2FsaG9zdA0KQ09OVEVOVC1MRU5HVEg6IDMNCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiYw==",
-      "minimized_b64": null,
+      "minimized_b64": "UE9TVCAgaHR0cDovL2xvY2FsaG9zdC8gSFRUUC8xLjENCkNvbnRlbnQtTGVuZ3RoOiAzDQoNCmFiYw==",
       "original_len": 94,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 58,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     },
     {
       "case_id": "7e6ac820",
       "axis": "request_line",
       "left": "ref-cl-first",
       "right": "ref-loose-request-line",
-      "level": "unknown",
+      "level": "security",
       "kind": "framing_boundary",
-      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'te', 'body_len', 'consumed']），但消融实验无法定位到单条可控头 → 需人工复核",
-      "controllable": false,
-      "ablation": null,
+      "reason": "消息边界解释分歧（字段 ['accepted', 'status', 'framing_source', 'te', 'body_len', 'consumed']），且由攻击者可直接发送的部分（请求行/请求头）承载 → 具备请求走私的结构性前提",
+      "controllable": true,
+      "ablation": "把请求行规范化成 `POST / HTTP/1.1` —— 分歧消失，说明它由攻击者可直接发送的部分承载",
       "cwe": "CWE-444",
       "scenario": "desync",
       "diffs": {
@@ -1016,10 +1016,10 @@
         ]
       },
       "payload_b64": "cG9zdCAvIEhUVFAvMS4xDQpIb3N0OiBsb2NhbGhvc3QNClRyYW5zZmVyLUVuY29kaW5nOiBDaHVua2VkDQoNCjUNCmhlbGxvDQowDQoNCg==",
-      "minimized_b64": null,
+      "minimized_b64": "cG9zdCAvIEhUVFAvMS4xDQpUcmFuc2Zlci1FbmNvZGluZzogQ2h1bmtlZA0KDQo1DQpoZWxsbw0KMA0KDQo=",
       "original_len": 79,
-      "minimized_len": 0,
-      "chain_evidence": null
+      "minimized_len": 62,
+      "chain_evidence": "若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面"
     }
   ]
 }

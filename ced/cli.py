@@ -75,6 +75,98 @@ def _cmd_regression(_: argparse.Namespace) -> int:
     return 0 if passed == len(outcomes) else 1
 
 
+def _cmd_cases(_: argparse.Namespace) -> int:
+    from . import regression
+    cases = regression.load_cases()
+    if not cases:
+        print("[!] cases/known/ 下没有案例文件")
+        return 1
+    print(f"{'案例':<28}{'分歧轴':<18}{'对照':<46}期望")
+    print("-" * 108)
+    for c in cases:
+        pair = f"{c['left']} ↔ {c['right']}"
+        print(f"{c['id']:<28}{c['axis']:<18}{pair:<46}{c.get('expect_kind', '')}")
+    print(f"\n共 {len(cases)} 个案例。看详情：python -m ced case <id>")
+    return 0
+
+
+def _dump(payload: bytes) -> None:
+    parts = payload.split(b"\r\n")
+    for i, part in enumerate(parts):
+        suffix = "\\r\\n" if i < len(parts) - 1 else ""
+        print(f"    {part.decode('latin-1')}{suffix}")
+
+
+def _cmd_case(args: argparse.Namespace) -> int:
+    import base64
+
+    from . import regression
+    from .adapters import get as get_adapter
+    from .classify.upgradability import judge
+    from .contracts import ImplSpec
+    from .differ.comparator import compare
+    from .impls import reference
+    from .probe import Evaluator
+
+    cases = {c["id"]: c for c in regression.load_cases()}
+    if args.id not in cases:
+        raise SystemExit(f"[!] 没有这个案例：{args.id}\n"
+                         f"    可选：{', '.join(sorted(cases))}")
+    spec = cases[args.id]
+    payload = base64.b64decode(spec["payload_b64"])
+
+    if args.raw:                       # 直接吐原始字节，可管道给 nc / curl
+        sys.stdout.flush()
+        sys.stdout.buffer.write(payload)
+        return 0
+
+    adapter = get_adapter("http1-framing")
+    left_id, right_id = spec["left"], spec["right"]
+    evaluator = Evaluator([
+        ImplSpec(impl_id=left_id, name=left_id, runner="local", policy=left_id),
+        ImplSpec(impl_id=right_id, name=right_id, runner="local", policy=right_id),
+    ])
+    left = evaluator(left_id, payload)
+    right = evaluator(right_id, payload)
+
+    print(f"案例      {spec['id']}")
+    print(f"分歧轴    {spec['axis']}")
+    print(f"对照      {left_id}  ↔  {right_id}")
+    print(f"期望      {spec.get('expect_kind')} · 字段 {spec.get('expect_fields')}")
+    print(f"出处      {spec.get('reference', '—')}")
+    print(f"说明      {spec.get('note', '—')}")
+    print(f"\n原始字节（{len(payload)} B）：")
+    _dump(payload)
+
+    div = compare(spec["id"], spec["axis"], payload, left, right, adapter.compare_keys)
+    print(f"\n两侧观测：")
+    print(f"    {'字段':<18}{left_id:<26}{right_id}")
+    for key in adapter.compare_keys:
+        mark = "  ←" if (div and key in div.keys) else ""
+        print(f"    {key:<18}{str(left.get(key)):<26}{right.get(key)}{mark}")
+
+    if div is None:
+        print("\n结果      两侧理解一致 —— 未构成耦合误差（期望值可能写错了）")
+        return 1
+
+    kind = adapter.classify([d.key for d in div.diffs])
+    verdict = judge(div, kind, adapter, evaluator)
+    print(f"\n分歧字段  {', '.join(div.keys)}")
+    print(f"分类      {kind}")
+    print(f"判定      {verdict.level}")
+    print(f"理由      {verdict.reason}")
+    if verdict.ablation:
+        print(f"可控性    {verdict.ablation}")
+    print(f"CWE       {verdict.cwe or '—'}"
+          + (f"　场景 {verdict.scenario}" if verdict.scenario else ""))
+    print(f"安全后果  {verdict.effect}")
+    print(f"修复建议  {verdict.fix}")
+
+    outcome = regression.run(cases=[spec])[0]
+    print(f"\n回归      {'PASS' if outcome.passed else 'FAIL'}  {outcome.detail}")
+    return 0 if outcome.passed else 1
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .probe.server import serve
     serve(args.host, args.data_port, args.api_port, reference.policy_of(args.policy))
@@ -121,6 +213,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("regression", help="已知案例反验证（平台有效性自证，改判定后必跑）")
     r.set_defaults(func=_cmd_regression)
+
+    cs = sub.add_parser("cases", help="列出全部已知案例")
+    cs.set_defaults(func=_cmd_cases)
+
+    c = sub.add_parser("case", help="摊开一个已知案例（原始字节 + 两侧观测 + 判定）")
+    c.add_argument("id", help="案例 id，见 python -m ced cases")
+    c.add_argument("--raw", action="store_true",
+                   help="只输出原始字节，可管道给 nc/curl 打靶")
+    c.set_defaults(func=_cmd_case)
 
     i = sub.add_parser("impls", help="列出参照实现与定向对照")
     i.set_defaults(func=_cmd_impls)

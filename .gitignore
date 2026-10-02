@@ -4,3 +4,8 @@ __pycache__/
 
 # 第三方原始素材（队友的实现包、赛题说明文档）—— 本地保留，不上传
 refs/
+
+# 跑扫描生成的产物（随时可由 python -m ced scan 重建）
+/ced.db
+/report.md
+/report.json

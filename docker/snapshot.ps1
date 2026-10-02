@@ -39,8 +39,12 @@ param(
     [switch]$Load,
     # 只校验哈希，不 load
     [switch]$Verify,
-    # tar 与 manifest.txt 的存放目录
-    [string]$OutDir = (Join-Path $PSScriptRoot "images"),
+    # tar 与 manifest.txt 的存放目录；空 = 默认 docker/images
+    #   注意：**不能**写成 `[string]$OutDir = (Join-Path $PSScriptRoot "images")` ——
+    #   参数默认值的求值早于脚本自动变量就位，实测在 PowerShell 5.1 下 $PSScriptRoot
+    #   此时是空字符串，Join-Path 直接报「参数 Path 为空字符串」。
+    #   所以默认值改到下面函数体里算（up.ps1/down.ps1 只在函数体里用它，故不受影响）。
+    [string]$OutDir = "",
     # 要快照的镜像；改了 docker-compose.yml 里的 image: 就要同步改这里
     [string[]]$Images = @(
         "nginx:1.25-alpine",   # front / gateway 前置
@@ -50,6 +54,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+    $OutDir = Join-Path $PSScriptRoot "images"
+}
 $manifest = Join-Path $OutDir "manifest.txt"
 
 function Convert-ToFileName([string]$image) {

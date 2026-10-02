@@ -233,7 +233,9 @@ def _verify_one(h: Hypothesis, domains: list[str]) -> Verification:
     return Verification(
         hypothesis=h, verdict=REFUTED,
         domain=",".join(domain for domain, _, _ in candidates),
-        detail="已证伪 —— " + "；".join(tried))
+        detail=("未证实 —— " + "；".join(tried)
+                + "。注意：这只说明**这些领域的参照实现看不出分歧**，"
+                  "不等于这条发现是假的（真实产品可能有本工具未建模的归一化口径）"))
 
 
 __all__ = ["CONFIRMED", "REFUTED", "UNVERIFIABLE", "EXTRACTORS", "verify"]

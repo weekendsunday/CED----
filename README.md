@@ -43,6 +43,7 @@ python main.py --check                 # 跑自检（测试 + 已知案例反验
 python main.py --probe                 # 同时起探针服务（接真实产品用）
 python -m ced regression               # 已知案例反验证
 python -m ced probe 请求文件            # 探测一份原始字节文件
+python -m ced probe 请求文件 --domain url-norm   # 指定领域（默认分帧；共 5 个）
 python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 ```
 
@@ -69,9 +70,10 @@ python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 | 参照实现 / 定向对照 | 9+12+9+11+10 = **51 个参照实现**，8+11+8+10+10 = **47 对定向对照** |
 | 能指出的漏洞类别 | **6 类**：请求走私 · 鉴权绕过/路径穿越 · 虚拟主机绕过/缓存投毒 · 参数污染 · 过滤器绕过 |
 | 实测（每领域 40 用例） | 分帧 13/11 · 路径 82/68 · Host 90/83 · 查询串 100/96 · 编码 82/52（分歧 / 其中安全级） |
+| 报告可读性 | 按「同一对实现 + 同一分歧类型」归并：分帧 13→**3** · 路径 82→**14** · Host 90→**6** · 查询串 100→**15** · 编码 82→**9**（发现 → 类；冗余最高 **15.0×**） |
 | 已知案例反验证 | **47/47 通过**（期望值全部独立手写，来自 RFC / 公开先例，不是工具输出） |
-| 自动化测试 | **175 项全绿**（引擎 17 / 探针协议 2 / 链路端到端 5 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9 / Host 12 / 查询串 11 / 编码 11 / 验证层 20） |
-| 代码量 | 源码 74 文件 11708 行；测试 14 文件 3193 行 |
+| 自动化测试 | **190 项全绿**（引擎 17 / 探针协议 2 / 链路端到端 5 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9 / Host 12 / 查询串 11 / 编码 11 / 验证层 20 / 发现归并 8 / 探针领域化 7） |
+| 代码量 | 源码 76 文件 12064 行；测试 16 文件 3497 行 |
 | 第三方依赖 | **0** —— 连模型调用（`urllib`）与前端事件流（手写 SSE）都是标准库 |
 
 > 数字一律从代码里数出来再写（`python main.py --check`、`python -m ced impls`、
@@ -173,7 +175,7 @@ python -m ced scan --out report.md --poc-dir results/pocs   # 扫描时自动产
 | 结论 | 判据 |
 |---|---|
 | **已证实** | 至少一对实现产生了结构分歧（级别由内核给出，**不是报告方的自述**） |
-| **已证伪** | 所有实现对这份输入理解一致 |
+| **未证实** | 试过的那几个领域里，所有实现对这份输入理解一致（**不等于**这条发现是假的） |
 | **证不了** | 没有任何领域的解析器能接受这份输入（会写清缺什么，例如"缺完整请求字节"） |
 
 ```bash
@@ -288,8 +290,8 @@ flowchart TD
 | 指标 | `ced/metrics.py` | 指标自动出数 + 交叉矩阵热力图 |
 | 扫描任务 | `ced/scan/` | 任务状态机、后台执行、事件流、中止时保留已完成部分 |
 | 控制台 | `ced/web/` | 零依赖 `ThreadingHTTPServer` + 单页前端；模型文字与确定性证据**分栏**渲染 |
-| 验证层 | `ced/intake/` | 外部发现（nuclei / Burp / HAR / curl / 清单）→ 假设 → 三态验证（已证实 / 已证伪 / 证不了） |
-| 真实链路 | `docker/` + `ced/probe/front.py` | Docker compose（**本机无 Docker，交由队友验证**）与无 Docker 的替身前置 |
+| 验证层 | `ced/intake/` | 外部发现（nuclei / Burp / HAR / curl / 清单）→ 假设 → 三态验证（已证实 / 未证实 / 证不了） |
+| 真实链路 | `docker/` + `ced/probe/front.py` | Docker compose（**本机无 Docker，尚未实机验证** —— 未验证清单见 `docker/README.md`）与无 Docker 的替身前置 |
 
 新增一个领域 = 实现 `DomainAdapter` 协议并在注册表登记，**引擎一行都不用改**。
 详见 [`docs/部署运行说明.md`](docs/部署运行说明.md) 第 4 节。
@@ -353,12 +355,11 @@ python -m ced regression
 | `ced/intake/` | 验证层：外部发现解析与三态验证（做扫描器的裁判） |
 | `ced/scan/` | 扫描任务层（job / runner） |
 | `ced/web/` | 网页控制台（server.py + index.html） |
-| `docker/` | 真实 nginx → 探针链路（compose / 离线快照 / **队友验证清单**） |
-| `tests` | `ced/tests/` —— 121 项，`python main.py --check` 一键全跑 |
+| `docker/` | 真实 nginx → 探针链路（compose / 离线快照 / 8 项未实机验证清单） |
+| `tests` | `ced/tests/` —— 191 项，`python main.py --check` 一键全跑 |
 | `docs/部署运行说明.md` | 部署、运行、扩展、排错 |
 | `docs/技术方案.md` | 目标对象、服务形态、指标、排期 |
-| `docs/队友交接清单.md` | 不读代码也能执行的验证 / 录屏 / 校对清单 |
-| `results/` | 跑出来的报告、结果库与 PoC 脚本 |
+| `results/` | 跑出来的报告、结果库与 PoC 脚本（样例报告可由 `python -m ced scan --domain http1-framing --mode axis --limit 60 --poc-dir results/pocs` 原样重建，22 个 PoC 脚本逐字节一致） |
 | `main.py` | 启动入口：起网页控制台 / 跑自检 |
 
 ---

@@ -142,10 +142,14 @@ class TestVerdicts(unittest.TestCase):
         self.assertIsNotNone(v.minimized_b64)
 
     def test_refuted_on_benign_input(self):
+        """口径：`refuted` 只表示"试过的这些领域里看不出分歧"，**不等于发现是假的**。"""
         hyps = load(BENIGN_URL, fmt="manual")
         results = verify(hyps, domains=["url-norm"])
+        detail = results[0].detail
         self.assertEqual(results[0].verdict, REFUTED)
-        self.assertIn("已证伪", results[0].detail)
+        self.assertIn("未证实", detail)
+        self.assertIn("不等于这条发现是假的", detail)      # 不许把"没看出"说成"是假的"
+        self.assertIn("url-norm", detail)                  # 要写清试过哪些领域
 
     def test_unverifiable_when_input_not_acceptable(self):
         # 只有 URL、没有原始请求字节 → 分帧领域无从下手

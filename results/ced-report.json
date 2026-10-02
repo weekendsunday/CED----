@@ -21,6 +21,64 @@
       "framing_boundary": 24
     }
   },
+  "redundancy": 8.0,
+  "clusters": [
+    {
+      "left": "ref-cl-first",
+      "right": "ref-loose-request-line",
+      "kind": "framing_boundary",
+      "level": "security",
+      "count": 12,
+      "case_id": "2204c027",
+      "axis": "request_line",
+      "case_ids": [
+        "2204c027",
+        "62ba123b",
+        "70162be0",
+        "c6b4341c",
+        "b8f75cf9",
+        "276c3a0e",
+        "63b954dd",
+        "fc4c74fb",
+        "f2b69e5e",
+        "7e6ac820"
+      ]
+    },
+    {
+      "left": "ref-cl-first",
+      "right": "ref-lenient-cl",
+      "kind": "framing_boundary",
+      "level": "security",
+      "count": 8,
+      "case_id": "3d0a4b5b",
+      "axis": "cl_value",
+      "case_ids": [
+        "3d0a4b5b",
+        "8b2611d2",
+        "d1df52a0",
+        "1cfdd820",
+        "44f044fe",
+        "4d4c1c3b",
+        "de0a72c9",
+        "c5cb884a"
+      ]
+    },
+    {
+      "left": "ref-cl-first",
+      "right": "ref-loose-headers",
+      "kind": "framing_boundary",
+      "level": "security",
+      "count": 4,
+      "case_id": "41d4a9a7",
+      "axis": "header_syntax",
+      "case_ids": [
+        "41d4a9a7",
+        "2eedc234",
+        "ff9e2e44",
+        "823440d4"
+      ]
+    }
+  ],
   "pocs": [
     {
       "case_id": "8b2611d2",

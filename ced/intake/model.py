@@ -2,7 +2,9 @@
 
 外部扫描器（nuclei / Burp / HAR / curl / 普通清单）产出的是**线索**，
 不是结论。这里把它们统一成 :class:`Hypothesis`，再经同一条差分 oracle 链
-得到三态的 :class:`Verification`（已证实 / 已证伪 / 证不了）。
+得到三态的 :class:`Verification`（已证实 / 未证实 / 证不了）。
+
+「未证实」是保守口径：只表示**试过的这些领域里看不出分歧**，不等于这条发现是假的。
 
 与 ``contracts.Proposal`` 同一个哲学：扫描器的命中率是它的卖点，
 是否成立必须由**确定性差分**重新判定，而不是采信扫描器自己的 severity。

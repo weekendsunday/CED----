@@ -19,8 +19,7 @@ import socket
 import time
 import urllib.request
 
-from ..contracts import Observation
-from .errors import ProbeRejected, ProbeUnreachable
+from ..contracts import Observation, ProbeRejected, ProbeUnreachable
 
 SEND_TIMEOUT = 10.0     # 发字节 + 读响应的超时
 VIEW_WAIT = 3.0         # 等探针记录视角的超时（前置没回响应时用）
@@ -34,14 +33,32 @@ def _parse_addr(addr: str) -> tuple[str, int]:
     return host or "127.0.0.1", int(port)
 
 
-def _send_raw(addr: tuple[str, int], payload: bytes) -> bytes:
-    """发原始字节，半关闭写端后读尽响应。"""
+def _send_raw(addr: tuple[str, int], payload: bytes, *,
+              half_close: bool = True) -> bytes:
+    """发原始字节后读尽响应。
+
+    ``half_close``（本机实测过的两种前置行为**不一样**，所以必须可选）：
+
+    ``True``（默认 / 快路径）
+        发完就半关闭写端，用 FIN 告诉对端"输入到此为止"。
+        对**替身前置**（``ced/probe/front.py``）这是最快路径：它把这个半关闭透传给
+        探针，探针读到 EOF 立刻处理 —— 一条用例约 0.004s。
+
+    ``False``（普通 HTTP 客户端行为）
+        curl / 浏览器都不会半关闭。**真实 nginx 必须用这个模式**：
+        客户端立即半关闭时，nginx 1.25.5 既不会把任何字节转发给上游、也不会回响应
+        （实测：探针记到的视角 ``raw_len=0``，客户端 0.0s 就断了），
+        于是整轮链路扫描会以"链路不可用"中止。
+        代价是探针只能靠 ``IDLE_TIMEOUT``（5 秒）判定输入结束，每条用例约 5s。
+        详见 :meth:`ChainEvaluator._observe` 的注释与 ``docker/README.md``。
+    """
     with socket.create_connection(addr, timeout=SEND_TIMEOUT) as sock:
         sock.sendall(payload)
-        try:
-            sock.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
+        if half_close:
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
         out = b""
         while True:
             try:
@@ -60,6 +77,10 @@ class ChainEvaluator:
     def __init__(self, front: str, probe_api: str) -> None:
         self.front = _parse_addr(front)
         self.api = _parse_addr(probe_api)
+        #: 这个前置吃不吃"客户端半关闭"那一套。None/True 起手先试快路径，
+        #: 一旦发现前置既没转发也没回响应，就改成普通客户端模式（不半关闭）并**记住**，
+        #: 后续用例不再白试一遍 —— 真 nginx 只多花一次连接，替身前置仍走 4ms 快路径。
+        self._half_close = True
 
     # ---------------------------------------------------------------- 控制口
 
@@ -87,6 +108,26 @@ class ChainEvaluator:
     def label(self) -> str:
         return f"{self.front[0]}:{self.front[1]}"
 
+    def _await_view(self, payload: bytes, response: bytes) -> dict | None:
+        """等探针写出本次用例的视角；等不到返回 None。
+
+        前置把字节转发给后端后，必须等后端响应才能回复客户端 —— 所以**响应到达时，
+        视角早已写好**。反过来，如果前置回了响应却没有视角，它一定是没转发。
+        据此把"被拒绝"的等待从 VIEW_WAIT 缩短到 REJECT_GRACE：
+        一轮扫描里被拒绝的用例可能占多数，白等 3 秒会把整轮扫描拖成分钟级。
+        """
+        deadline = time.time() + (REJECT_GRACE if response else VIEW_WAIT)
+        while time.time() < deadline:
+            for view in self.views():
+                # 零字节观测不可能对应一个非空请求 —— 它一定是端口探活之类的
+                # 噪声连接被前置转发进来的。若把它当成本次用例的视角，
+                # 就会产出与基线"必然不同"的假阳性。跳过它，继续等真正的视角。
+                if payload and not view.get("raw_len"):
+                    continue
+                return view
+            time.sleep(0.02)
+        return None
+
     def __call__(self, impl_id: str, payload: bytes) -> Observation:
         try:
             self.reset()
@@ -95,34 +136,39 @@ class ChainEvaluator:
                 f"前置 {self.label} 后面的探针控制口 "
                 f"{self.api[0]}:{self.api[1]} 不可达：{exc}") from exc
 
-        try:
-            response = _send_raw(self.front, payload)
-        except OSError as exc:
-            raise ProbeUnreachable(f"前置 {self.label} 不可达：{exc}") from exc
+        # 先按记下来的模式试；若前置**既没转发、也没回响应**，换另一种客户端收尾方式
+        # 再问一次。为什么值得多问一次（本机实测）：真实 nginx 对"客户端立即半关闭"
+        # 的反应就是既不转发也不回响应 —— 若直接判成"链路不可用"，真实链路永远扫不了。
+        modes = [self._half_close] + ([False] if self._half_close else [])
+        last_response = b""
+        for index, half_close in enumerate(modes):
+            last = index == len(modes) - 1
+            if index:
+                # 换模式前清掉上一轮留下的噪声视角，避免它被下一条用例消费
+                try:
+                    self.reset()
+                except OSError:
+                    pass
+            try:
+                last_response = _send_raw(self.front, payload, half_close=half_close)
+            except OSError as exc:
+                raise ProbeUnreachable(f"前置 {self.label} 不可达：{exc}") from exc
 
-        # 前置把字节转发给后端后，必须等后端响应才能回复客户端 —— 所以**响应到达时，
-        # 视角早已写好**。反过来，如果前置回了响应却没有视角，它一定是没转发。
-        # 据此把"被拒绝"的等待从 VIEW_WAIT 缩短到 REJECT_GRACE：
-        # 一轮扫描里被拒绝的用例可能占多数，白等 3 秒会把整轮扫描拖成分钟级。
-        budget = REJECT_GRACE if response else VIEW_WAIT
-        deadline = time.time() + budget
-        while time.time() < deadline:
-            for view in self.views():
-                # 零字节观测不可能对应一个非空请求 —— 它一定是端口探活之类的
-                # 噪声连接被前置转发进来的。若把它当成本次用例的视角，
-                # 就会产出与基线"必然不同"的假阳性。跳过它，继续等真正的视角。
-                if payload and not view.get("raw_len"):
-                    continue
+            view = self._await_view(payload, last_response)
+            if view is not None:
+                self._half_close = half_close        # 记住这个前置吃哪一套
                 return Observation(impl_id=impl_id,
                                    ok=view.get("ok", True),
                                    error=view.get("error"),
                                    fields=view.get("fields", {}))
-            time.sleep(0.02)
+            if not last and not last_response:
+                continue
+            break
 
-        if response:
+        if last_response:
             raise ProbeRejected(
                 f"前置 {self.label} 收到 {len(payload)} 字节，"
-                f"但未向后端转发任何字节（回了 {len(response)} 字节响应）"
+                f"但未向后端转发任何字节（回了 {len(last_response)} 字节响应）"
                 f"—— 按自身策略拒绝了这条请求，本条不可观测")
         raise ProbeUnreachable(
             f"前置 {self.label} 没有把任何字节转发到探针，也没有回响应"

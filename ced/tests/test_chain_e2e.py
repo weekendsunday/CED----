@@ -7,12 +7,15 @@
   * 会改写的前置    → 检出边界分歧（证明链路差分真的能工作）
   * 前置不可达      → **抛错**，绝不合成观测（防"探测失败 → 成片假阳性"）
   * 前置收下不转发  → **跳过并计数**（不合成观测、也不中止；真实前置拒绝畸形请求属正常）
+  * 吃不下半关闭的前置 → 链路器**自动降级成普通客户端模式**（真 nginx 就是这样：本机实测
+                        客户端立即半关闭时它既不转发也不回响应），且只多花一次连接
 """
 from __future__ import annotations
 
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -24,10 +27,12 @@ from ced.adapters.http1_framing import Http1FramingAdapter
 from ced.contracts import ImplSpec
 from ced.orchestrate.topology import Topology
 from ced.pipeline import scan
-from ced.probe import Evaluator, ProbeUnreachable
+from ced.contracts import ProbeUnreachable
+from ced.probe import Evaluator
 
 ADAPTER = Http1FramingAdapter()
 FRONT = Path(__file__).resolve().parent / "fixtures" / "standin_front.py"
+NGINX_LIKE_FRONT = Path(__file__).resolve().parent / "fixtures" / "nginx_like_front.py"
 DEVNULL = subprocess.DEVNULL
 
 
@@ -90,6 +95,21 @@ class TestChainE2E(unittest.TestCase):
         _wait_port(port)
         return port
 
+    def _start_nginx_like_front(self) -> tuple[int, Path]:
+        """起一个"吃不下客户端立即半关闭"的前置（见 fixtures/nginx_like_front.py）。
+
+        返回 (端口, 连接计数文件) —— 计数文件用来验证"模式被记住、只多花一次连接"。
+        """
+        port = _free_port()
+        counter = Path(tempfile.mkdtemp()) / "connections.txt"
+        proc = subprocess.Popen(
+            [sys.executable, str(NGINX_LIKE_FRONT), str(port),
+             str(self.probe_data), str(counter)],
+            cwd=str(ROOT), stdout=DEVNULL, stderr=DEVNULL)
+        self.addCleanup(_stop, proc)
+        _wait_port(port)
+        return port, counter
+
     def _evaluator(self, front_port: int) -> Evaluator:
         """链路侧 = 前置 → 探针（探针用的是 ref-cl-first 策略）；
         基准侧 = 直接跑 ref-cl-first。
@@ -142,6 +162,29 @@ class TestChainE2E(unittest.TestCase):
         result = scan(ADAPTER, evaluator, mode="cross", limit=6, do_minimize=False)
         self.assertEqual(len(result.findings), 0, "不可观测的用例不许产出发现")
         self.assertGreater(result.rejected_cases, 0, "跳过必须计数，不许静默")
+
+    def test_front_that_cannot_take_client_half_close(self):
+        """吃不下"客户端立即半关闭"的前置 → 链路器自动降级，而不是判成链路不可用。
+
+        本机实测（docker 里的 nginx:1.25-alpine，见 docker/README.md）：
+          客户端发完立即 shutdown(SHUT_WR) → nginx 既不转发也不回响应（0.0s 断开）；
+          改成不半关闭（curl 的做法）      → 正常转发。
+        所以链路器必须在第一次观测失败后自己换模式，否则真实链路永远扫不了。
+        """
+        port, counter = self._start_nginx_like_front()
+        evaluator = self._evaluator(port)
+        result = scan(ADAPTER, evaluator, mode="cross", limit=24, do_minimize=False)
+
+        # 这个前置除"吃不下半关闭"之外是透明的 → 一个分歧都不许有
+        self.assertEqual(len(result.divergences), 0,
+                         f"这个前置是透明的，不该出现分歧：{result.divergences[:2]}")
+        self.assertEqual(len(result.findings), 0)
+
+        # 模式要被记住：只有第一次观测会白试一遍半关闭，后续用例直连正确模式
+        conns = len(counter.read_text(encoding="utf-8").split())
+        self.assertLess(conns, 2 * result.total_cases,
+                        f"每个用例都重试了一遍（模式没被记住）：{conns} 次连接 / "
+                        f"{result.total_cases} 个用例")
 
     def test_probe_control_api_unreachable_raises(self):
         """前置活着但探针控制口不可达 → 报错必须指明是探针的问题。"""

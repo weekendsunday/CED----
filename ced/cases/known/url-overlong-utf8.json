@@ -1,0 +1,17 @@
+{
+  "id": "url-overlong-utf8",
+  "domain": "url-norm",
+  "axis": "path_overlong_utf8",
+  "left": "url-gateway",
+  "right": "url-overlong-accept",
+  "expect_kind": "path_traversal",
+  "expect_fields": [
+    "accepted",
+    "status",
+    "norm_path",
+    "traversal"
+  ],
+  "reference": "RFC 3629 §3（过长编码必须被拒绝）",
+  "note": "一侧按 RFC 拒绝过长 UTF-8 并回 400；另一侧接受它，把 %c0%ae%c0%ae%2f 解成 `../`，于是 /pub/../admin 被解算成 /admin。这是历史上最经典的「过长编码绕过」。",
+  "payload_b64": "L3B1Yi8lYzAlYWUlYzAlYWUlMmZhZG1pbg=="
+}

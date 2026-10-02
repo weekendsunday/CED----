@@ -1,0 +1,15 @@
+{
+  "id": "host-userinfo",
+  "domain": "host-norm",
+  "axis": "host_userinfo",
+  "left": "host-literal",
+  "right": "host-strip-userinfo",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host",
+    "has_userinfo"
+  ],
+  "payload_b64": "dXNlckBleGFtcGxlLmNvbQ==",
+  "reference": "RFC 3986 authority userinfo vs WHATWG URL Host 解析",
+  "note": "同一段 `user@example.com`：朴素 Host 处理器把整串当成主机名；WHATWG URL 解析器剥掉 `@` 之前的 userinfo，认成 `example.com`。经典的 `evil.com@victim.com` 虚拟主机绕过 / 缓存投毒结构。"
+}

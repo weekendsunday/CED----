@@ -30,6 +30,19 @@ class DomainAdapter(Protocol):
         """参与差分的实现清单。"""
         ...
 
+    def local_parser(self) -> tuple:
+        """本领域的本地解析器：``(policy_of, parse)``。
+
+        ``parse(payload, policy)`` 必须返回带 ``ok`` / ``reason`` / ``to_fields()``
+        的对象。引擎靠它把 ``runner=local`` 的实现接到本领域的解析内核上 ——
+        这是"加领域不改引擎"的关键接口。
+        """
+        ...
+
+    def pairs(self) -> dict[str, tuple[str, str]]:
+        """定向对照：轴名 → (左实现, 右实现)。"""
+        ...
+
     def corpus(self) -> list[tuple[str, bytes]]:
         """种子语料：(轴名, 原始字节)。"""
         ...
@@ -68,6 +81,16 @@ class DomainAdapter(Protocol):
 
         最小化的粒度是领域知识：分帧是"请求头行"，路径归一化是"路径段"。
         ``predicate(candidate) -> bool`` 判断该候选是否仍然构成分歧。
+        """
+        ...
+
+    def poc_block(self) -> dict:
+        """端到端 PoC 脚本的**领域片段**：``{imports, measure_body, report_body}``。
+
+        脚本骨架（参数解析、合规门禁、--send）由 ``scenario/poc.py`` 统一提供；
+        这里只填"怎么算这个领域的量化指标、怎么断言"。
+        返回的 ``measure_body`` 是 ``measure()`` 的函数体（4 空格缩进），
+        算不出来时返回 ``None``；``report_body`` 在拿到结果后打印并置 ``ok``。
         """
         ...
 

@@ -1,0 +1,15 @@
+{
+  "id": "query-dup-first-last",
+  "domain": "query-norm",
+  "axis": "query_duplicate",
+  "left": "query-gateway",
+  "right": "query-last-wins",
+  "expect_kind": "param_pollution",
+  "expect_fields": [
+    "norm_query",
+    "dup_kept"
+  ],
+  "payload_b64": "YT0xJmE9Mg==",
+  "reference": "HTTP 参数污染（HPP）：同名参数取首 vs 取尾",
+  "note": "同一段 `a=1&a=2`：前置（Java Servlet `getParameter` 风格）取首，解析成 `a=1`；后端（PHP / Node `querystring` 风格）取尾，解析成 `a=2`。前置按 `a=1` 做校验、后端按 `a=2` 执行业务 —— 用同一份输入就能让『被校验的值』与『被使用的值』分叉。"
+}

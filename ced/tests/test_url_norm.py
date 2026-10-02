@@ -71,6 +71,11 @@ CASES: tuple[tuple[bytes, str, str, frozenset, str, str], ...] = (
     (b"/pub%2Fadmin", "url-gateway", "url-decode-never",
      frozenset({"norm_path", "segments", "decoded"}),
      "/pub/admin", "/pub%2Fadmin"),
+    (b"/pub/%c0%ae%c0%ae%2fadmin", "url-gateway", "url-overlong-accept",
+     frozenset({"accepted", "status", "norm_path", "traversal", "segments", "decoded"}),
+     "/pub/%c0%ae%c0%ae%2fadmin", "/admin"),
+    (b"/admin%00.jpg", "url-gateway", "url-null-truncate",
+     frozenset({"norm_path"}), "/admin\x00.jpg", "/admin"),
 )
 
 

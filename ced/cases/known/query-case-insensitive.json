@@ -1,0 +1,15 @@
+{
+  "id": "query-case-insensitive",
+  "domain": "query-norm",
+  "axis": "query_case",
+  "left": "query-gateway",
+  "right": "query-case-insensitive",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query",
+    "keys"
+  ],
+  "payload_b64": "TmFtZT14",
+  "reference": "HTTP 规范里查询参数名大小写敏感；部分应用 / 网关小写化后再匹配",
+  "note": "同一段 `Name=x`：敏感的一侧参数名保持 `Name`；不敏感的一侧归一成 `name`。名字不同 → 前置按 `Name` 匹配、后端按 `name` 取值，参数名匹配规则可被绕过。"
+}

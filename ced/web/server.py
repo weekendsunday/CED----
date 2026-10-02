@@ -49,8 +49,9 @@ SSE_WAIT = 20.0
 REGISTRY = JobRegistry()
 
 
-def _spec_for(impl_id: str) -> ImplSpec:
-    return ImplSpec(impl_id=impl_id, name=impl_id, runner="local", policy=impl_id)
+def _spec_for(impl_id: str, domain: str = "http1-framing") -> ImplSpec:
+    return ImplSpec(impl_id=impl_id, name=impl_id, runner="local",
+                    policy=impl_id, domain=domain)
 
 
 def _impls_info() -> dict:
@@ -63,6 +64,23 @@ def _impls_info() -> dict:
                       "deviation": "、".join(f"{k}={v}" for k, v in delta.items())
                                    or "基线本身"})
     return {"impls": items}
+
+
+def _domains_info() -> dict:
+    """已注册领域一览 —— 控制台的领域选择器靠它填充。
+
+    每个领域报出参照实现数与定向对照数，让使用者一眼看出"这个领域有多厚"。
+    """
+    from ..impls import axis_pairs, local_specs
+
+    items = []
+    for name in ADAPTERS:
+        try:
+            items.append({"name": name, "impls": len(local_specs(name)),
+                          "pairs": len(axis_pairs(name))})
+        except KeyError:
+            items.append({"name": name, "impls": 0, "pairs": 0})
+    return {"domains": sorted(items, key=lambda d: d["name"])}
 
 
 def _case_brief(spec: dict) -> dict:
@@ -174,6 +192,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if url.path == "/api/impls":
             return self._json(_impls_info())
+        if url.path == "/api/domains":
+            return self._json(_domains_info())
         if url.path == "/api/cases":
             return self._json({"cases": [_case_brief(c)
                                          for c in regression.load_cases()]})
@@ -213,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._scan_abort(body)
         if url.path == "/api/assist/propose":
             return self._assist_propose(body)
+        if url.path == "/api/verify":
+            return self._verify(body)
         return self._json({"error": "not found"}, 404)
 
     # ----------------------------------------------------------------- 业务
@@ -270,14 +292,53 @@ class Handler(BaseHTTPRequestHandler):
             "results": results,
         })
 
+    def _verify(self, body: dict) -> None:
+        """验证外部发现：把别人的命中当假设，用同一条 oracle 链证实/证伪。
+
+        判定由内核给出，不看报告方自述 —— 因此这里绝不接受调用方传进来的"结论"。
+        """
+        from ..intake import load
+        from ..intake import verify as verify_hypotheses
+
+        text = body.get("text") or ""
+        if not text.strip():
+            return self._json({"error": "没有内容可验证 —— 先贴一份清单"}, 400)
+        fmt = (body.get("fmt") or "auto").strip()
+        domains = [d for d in (body.get("domains") or []) if d in ADAPTERS]
+        try:
+            hypotheses = load(text, fmt=fmt)
+        except Exception as exc:
+            return self._json({"error": f"读不了这份清单：{exc}"}, 400)
+        if not hypotheses:
+            return self._json({"error": "识别到了格式，但里面没有可验证的条目"}, 400)
+        try:
+            results = verify_hypotheses(hypotheses, domains=domains or None)
+        except Exception as exc:
+            return self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+        counts = {k: sum(1 for v in results if v.verdict == k)
+                  for k in ("confirmed", "refuted", "unverifiable")}
+        return self._json({
+            "counts": counts,
+            "items": [{
+                "verdict": v.verdict, "target": v.hypothesis.target,
+                "source": v.hypothesis.source, "domain": v.domain,
+                "left": v.left, "right": v.right, "level": v.level,
+                "kind": v.kind, "reason": v.reason, "evidence": v.evidence,
+                "detail": v.detail,
+            } for v in results],
+        })
+
     def _case_detail(self, case_id: str) -> None:
         cases = {c["id"]: c for c in regression.load_cases()}
         if case_id not in cases:
             return self._json({"error": f"没有这个案例：{case_id}"}, 404)
         spec = cases[case_id]
         payload = base64.b64decode(spec["payload_b64"])
-        adapter = get_adapter("http1-framing")
-        evaluator = Evaluator([_spec_for(spec["left"]), _spec_for(spec["right"])])
+        domain = spec.get("domain", "http1-framing")
+        adapter = get_adapter(domain)
+        evaluator = Evaluator([_spec_for(spec["left"], domain),
+                               _spec_for(spec["right"], domain)])
         result = analyze(payload, spec["left"], spec["right"], evaluator,
                          adapter, minimize=True)
         outcome = regression.run(cases=[spec])[0]

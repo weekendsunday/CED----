@@ -36,6 +36,8 @@ AXES: tuple[str, ...] = (
     "path_trailing_dot",
     "path_semicolon",
     "path_case_fold",
+    "path_overlong_utf8",
+    "path_null_byte",
     "path_benign",
 )
 
@@ -138,6 +140,30 @@ def case_case_fold() -> list[bytes]:
     ]
 
 
+def case_overlong_utf8() -> list[bytes]:
+    """A10 过长 UTF-8：RFC 3629 禁止，但历史实现接受 —— `%c0%ae` 表示 `.`。
+
+    `%c0%ae` / `%e0%80%ae` 都是"用多余的字节编码一个 ASCII 字符"，
+    接受它们的实现会把它解成 `.`，于是 `%c0%ae%c0%ae%2f` 等价于 `../`。
+    """
+    return [
+        b"/pub/%c0%ae%c0%ae%2fadmin",
+        b"/%c0%afadmin",
+        b"/pub/%e0%80%ae%e0%80%ae%2fadmin",
+        b"/%c0%ae%c0%ae/%c0%ae%c0%ae/admin",
+    ]
+
+
+def case_null_byte() -> list[bytes]:
+    """A11 空字节：历史实现把 `%00` 当字符串结束（"空字节截断"）。"""
+    return [
+        b"/admin%00.jpg",
+        b"/admin%00/pub",
+        b"/pub%00/../admin",
+        b"/admin%00",
+    ]
+
+
 def case_benign() -> list[bytes]:
     """A0 良性对照：完全规范的 target，**任何一对实现都不该有分歧**。
 
@@ -163,6 +189,8 @@ _BUILDERS = {
     "path_trailing_dot": case_trailing_dot,
     "path_semicolon": case_semicolon,
     "path_case_fold": case_case_fold,
+    "path_overlong_utf8": case_overlong_utf8,
+    "path_null_byte": case_null_byte,
     "path_benign": case_benign,
 }
 
@@ -355,6 +383,35 @@ def _ab_lower(target: bytes) -> bytes:
     return _bytes(lower_preserving_escapes(_text(path))) + query
 
 
+def _ab_strip_null(target: bytes) -> bytes:
+    """抹掉 NUL 及其之后的部分 —— 两侧就都只看到 NUL 之前的内容。"""
+    low = target.lower()
+    for marker in (b"%00",):
+        idx = low.find(marker)
+        if idx != -1:
+            return target[:idx] or b"/"
+    return target
+
+
+#: 过长 UTF-8 序列 → 最短形式（`%c0%ae` 就是 `.`）
+_OVERLONG_TO_SHORT = {
+    b"%c0%ae": b"%2E", b"%c0%af": b"%2F", b"%c1%9c": b"%5C",
+    b"%e0%80%ae": b"%2E", b"%e0%80%af": b"%2F",
+}
+
+
+def _ab_shorten_overlong(target: bytes) -> bytes:
+    """把过长 UTF-8 序列换成最短形式 —— 抹掉"编码是否过长"这个承载者。"""
+    out = target
+    for long_form, short in _OVERLONG_TO_SHORT.items():
+        while True:
+            idx = out.lower().find(long_form)
+            if idx == -1:
+                break
+            out = out[:idx] + short + out[idx + len(long_form):]
+    return out
+
+
 def _is_hex(ch: int) -> bool:
     return (0x30 <= ch <= 0x39) or (0x41 <= ch <= 0x46) or (0x61 <= ch <= 0x66)
 
@@ -368,6 +425,8 @@ ABLATIONS: tuple[tuple[str, Callable[[bytes], bytes]], ...] = (
     ("折叠连续斜杠", _ab_collapse_slashes),
     ("把百分号编码解一层", _ab_decode_one),
     ("把点段（`.` / `..`）整个删掉", _ab_drop_dot_segments),
+    ("把过长 UTF-8 序列换成最短形式", _ab_shorten_overlong),
+    ("抹掉 NUL 及其之后的部分", _ab_strip_null),
     ("把路径全部小写（保留转义）", _ab_lower),
 )
 

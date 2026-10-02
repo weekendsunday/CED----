@@ -1,0 +1,14 @@
+{
+  "id": "query-plus-literal",
+  "domain": "query-norm",
+  "axis": "query_plus",
+  "left": "query-gateway",
+  "right": "query-plus-literal",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query"
+  ],
+  "payload_b64": "YT0xKzI=",
+  "reference": "application/x-www-form-urlencoded：PHP / Python `parse_qsl` 认 `+` 为空格；`decodeURIComponent` 不认",
+  "note": "同一段 `a=1+2`：认 `+` 为空格的一侧解出 `1 2`；不认的一侧解出 `1+2`。取值不同 —— 同一份输入在两侧是不同字符串，可能绕过基于值的校验。"
+}

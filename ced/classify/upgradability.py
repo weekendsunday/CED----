@@ -118,21 +118,22 @@ def judge(div: Divergence, kind: str, adapter, evaluate: Evaluator) -> Verdict:
 
     if kind in boundary_kinds and controllable:
         level, reason = LEVEL_SECURITY, (
-            f"消息边界解释分歧（字段 {keys}），且由攻击者可直接发送的部分（请求行/请求头）承载 "
-            f"→ 具备请求走私的结构性前提"
+            f"结构字段分歧（{keys}），且消融实验证明它由攻击者可直接发送的字节承载 "
+            f"→ 具备可升级为安全影响的结构性前提；"
+            f"具体后果与 CWE 见领域映射（{meta['cwe'] or '—'}）"
         )
     elif kind in boundary_kinds:
         level, reason = LEVEL_UNKNOWN, (
-            f"消息边界解释分歧（字段 {keys}），但消融实验无法定位到单条可控头 "
+            f"结构字段分歧（{keys}），但消融实验无法定位到单条可控承载者 "
             f"→ 需人工复核"
         )
     elif kind == adapter.kind_acceptance and controllable:
         level, reason = LEVEL_UNKNOWN, (
-            f"接受性分歧且由可控请求头承载 → 防护绕过候选，需人工复核（保守不升级）"
+            f"接受性分歧且由可控字节承载 → 防护绕过候选，需人工复核（保守不升级）"
         )
     else:
         level, reason = LEVEL_COMPAT, (
-            f"仅诊断字段不同（{keys}），观测到的消息结构一致，无安全后果"
+            f"仅诊断字段不同（{keys}），参与判定的结构字段一致，无安全后果"
         )
 
     return Verdict(level=level, kind=kind, reason=reason,

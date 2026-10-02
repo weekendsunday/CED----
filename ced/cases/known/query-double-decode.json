@@ -1,0 +1,14 @@
+{
+  "id": "query-double-decode",
+  "domain": "query-norm",
+  "axis": "query_double_decode",
+  "left": "query-gateway",
+  "right": "query-double-decode",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query"
+  ],
+  "payload_b64": "YT0lMjUyNg==",
+  "reference": "双重编码：前置 + 后端串联形成事实上的二次解码",
+  "note": "同一段 `a=%2526`：解码一次的一侧得到 `%26`；解码两次的一侧再解一层得到 `&`。双重编码只有在**第二层**解码时才现形。"
+}

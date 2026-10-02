@@ -19,7 +19,6 @@ from pathlib import Path
 from .adapters import get as get_adapter
 from .contracts import ImplSpec
 from .differ.comparator import compare
-from .impls import reference
 from .pipeline import case_id_of
 from .probe import Evaluator
 
@@ -88,11 +87,9 @@ def _evaluate(adapter, spec: dict) -> CaseOutcome:
 
 
 def policy_for(adapter, impl_id: str):
-    """取某个领域里某个参照实现的策略（各领域的注册表不同）。"""
-    if adapter.name == "url-norm":
-        from .impls import url_reference
-        return url_reference.policy_of(impl_id)
-    return reference.policy_of(impl_id)
+    """取某个领域里某个参照实现的策略（各领域的注册表不同，统一走 impls）。"""
+    from .impls import policy_for as lookup
+    return lookup(adapter.name, impl_id)
 
 
 def run(directory: Path | str = CASES_DIR,

@@ -1,0 +1,15 @@
+{
+  "id": "query-bracket-strip",
+  "domain": "query-norm",
+  "axis": "query_bracket",
+  "left": "query-gateway",
+  "right": "query-bracket-strip",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query",
+    "keys"
+  ],
+  "payload_b64": "YVtdPTE=",
+  "reference": "PHP 数组参数 `a[]` 语法；面向对象框架 / WAF 会剥掉 `[...]` 再看参数名",
+  "note": "同一段 `a[]=1`：保留括号的一侧参数名是 `a[]`；剥离括号的一侧参数名归一成 `a`。名字不同 → 前置按 `a[]` 匹配、后端按 `a` 取值，参数名匹配规则可被绕过。"
+}

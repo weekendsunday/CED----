@@ -1,0 +1,15 @@
+{
+  "id": "enc-unicode-nfc",
+  "domain": "enc-norm",
+  "axis": "enc_unicode_nfc",
+  "left": "enc-strict",
+  "right": "enc-nfc",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "Y2FmZSVDQyU4MQ==",
+  "reference": "Unicode Standard Annex #15（NFC）；多数浏览器 / WAF 在匹配前做 NFC",
+  "note": "同一段 `cafe` + U+0301（组合尖音符）：不做规范化的实现看到的是 `cafe\\u0301`（5 个码点），做 NFC 的实现看到预组合的 `café`（U+00E9）。关键字/路径黑名单若建立在字节比较上，就漏掉了归一化后才现形的那份。"
+}

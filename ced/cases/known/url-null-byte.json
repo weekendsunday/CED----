@@ -1,0 +1,14 @@
+{
+  "id": "url-null-byte",
+  "domain": "url-norm",
+  "axis": "path_null_byte",
+  "left": "url-gateway",
+  "right": "url-null-truncate",
+  "expect_kind": "path_interpretation",
+  "expect_fields": [
+    "norm_path"
+  ],
+  "reference": "历史语言/服务器把 NUL 当作字符串结束（空字节截断）",
+  "note": "一侧保留 NUL 之后的 .jpg（做扩展名白名单检查时会看到 .jpg）；另一侧在 NUL 处截断，真正执行的是 /admin —— 检查侧与执行侧看到不同的资源。",
+  "payload_b64": "L2FkbWluJTAwLmpwZw=="
+}

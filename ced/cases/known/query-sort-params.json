@@ -1,0 +1,15 @@
+{
+  "id": "query-sort-params",
+  "domain": "query-norm",
+  "axis": "query_sort",
+  "left": "query-gateway",
+  "right": "query-sorted",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query",
+    "keys"
+  ],
+  "payload_b64": "Yj0yJmE9MQ==",
+  "reference": "缓存键 / WAF 规范化 / AWS SigV4 要求查询串排序后签名",
+  "note": "同一段 `b=2&a=1`：保持原序的一侧是 `b=2&a=1`；排序的一侧是 `a=1&b=2`。同一组参数但序列化不同 —— 依赖查询串原文做缓存键 / 签名基串的两侧会算出不同的键（缓存键错位 / 签名绕过）。"
+}

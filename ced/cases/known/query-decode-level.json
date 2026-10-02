@@ -1,0 +1,14 @@
+{
+  "id": "query-decode-level",
+  "domain": "query-norm",
+  "axis": "query_decoding",
+  "left": "query-gateway",
+  "right": "query-no-decode",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query"
+  ],
+  "payload_b64": "YT0lMjZiJTNEMQ==",
+  "reference": "百分号解码：多数框架解一次；不归一化的前置原样转发",
+  "note": "同一段 `a=%26b%3D1`：解码一次的一侧把值解成 `&b=1`；不解码的一侧保留 `%26b%3D1`。两侧对『这个参数的值是什么』判断不同 —— 编码绕过 / 过滤器绕过。"
+}

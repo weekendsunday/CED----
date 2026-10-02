@@ -21,6 +21,8 @@ BASE: dict = dict(
     dot_segments="resolve",
     percent_decode="once",
     percent_case="lenient",
+    overlong_utf8="reject",
+    null_byte="keep",
     backslash="literal",
     duplicate_slash="keep",
     trailing_dot_space="keep",
@@ -46,6 +48,8 @@ NORM_REFERENCES: dict[str, NormPolicy] = {
     "url-strip-trailing": _p("url-strip-trailing", trailing_dot_space="strip"),
     "url-strip-semicolon": _p("url-strip-semicolon", semicolon_params="strip"),
     "url-case-insensitive": _p("url-case-insensitive", case_fold="insensitive"),
+    "url-overlong-accept": _p("url-overlong-accept", overlong_utf8="accept"),
+    "url-null-truncate": _p("url-null-truncate", null_byte="truncate"),
 }
 
 #: 分歧轴 → 该轴上"两个策略名"的对照（用于按轴定向差分）
@@ -59,6 +63,8 @@ AXIS_PAIRS: dict[str, tuple[str, str]] = {
     "path_trailing_dot": ("url-gateway", "url-strip-trailing"),
     "path_semicolon": ("url-gateway", "url-strip-semicolon"),
     "path_case_fold": ("url-gateway", "url-case-insensitive"),
+    "path_overlong_utf8": ("url-gateway", "url-overlong-accept"),
+    "path_null_byte": ("url-gateway", "url-null-truncate"),
 }
 
 

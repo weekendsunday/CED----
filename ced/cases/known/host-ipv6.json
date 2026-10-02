@@ -1,0 +1,14 @@
+{
+  "id": "host-ipv6",
+  "domain": "host-norm",
+  "axis": "host_ipv6",
+  "left": "host-literal",
+  "right": "host-ipv6-canonical",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "WzA6MDowOjA6MDowOjA6MV0=",
+  "reference": "RFC 5952 IPv6 文本表示 vs WHATWG URL IPv6 归一化",
+  "note": "同一段 `[0:0:0:0:0:0:0:1]`：朴素解析器逐字节保留；WHATWG URL / 规范实现压成 RFC 5952 形式 `[::1]`。IP 白名单 / 缓存键按原始写法匹配时会分叉。"
+}

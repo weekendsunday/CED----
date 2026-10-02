@@ -1,0 +1,14 @@
+{
+  "id": "host-case-fold",
+  "domain": "host-norm",
+  "axis": "host_case_fold",
+  "left": "host-literal",
+  "right": "host-lowercase",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "RVhBTVBMRS5jb20=",
+  "reference": "DNS 大小写不敏感 vs 基于原始字符串的 vhost / 缓存键",
+  "note": "同一段 `EXAMPLE.com`：DNS 语义大小写不敏感，但基于原始 Host 字节做 vhost 匹配或缓存键的实现会把它当成另一个站。一侧小写折叠、一侧原样保留，二者分叉。"
+}

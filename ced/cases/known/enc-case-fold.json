@@ -1,0 +1,15 @@
+{
+  "id": "enc-case-fold",
+  "domain": "enc-norm",
+  "axis": "enc_case_fold",
+  "left": "enc-strict",
+  "right": "enc-fold-case",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "cGElQzUlQkZz",
+  "reference": "Unicode 默认大小写折叠（长 s `ſ` U+017F → `s`；Kelvin `K` U+212A → `k`）",
+  "note": "同一段 `pa%C5%BFs`（长 s `ſ` = U+017F）：不做 Unicode 折叠的实现看到 `paſs`（4 个码点），做 casefold 的实现看到 `pass`。只做 ASCII 小写的关键字黑名单挡不住 casefold 后才等价于关键字的字符。"
+}

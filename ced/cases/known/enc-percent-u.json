@@ -1,0 +1,15 @@
+{
+  "id": "enc-percent-u",
+  "domain": "enc-norm",
+  "axis": "enc_percent_u",
+  "left": "enc-strict",
+  "right": "enc-percent-u",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "decoded_layers"
+  ],
+  "payload_b64": "JXUwMDJmYWRtaW4=",
+  "reference": "IIS 的 `%uXXXX` 遗留转义（`%u002e%u002e%u002f` 目录穿越）；Apache/PHP 只认 `%XX`",
+  "note": "同一段 `%u002fadmin`：只认 `%XX` 的实现把它当字面量（解码层数 0），认 IIS 遗留转义的实现把它解成 `/admin`（解码层数 1）。检查侧看到的是无害的 `%u002f`，执行侧看到的是 `/`。"
+}

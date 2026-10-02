@@ -1,0 +1,14 @@
+{
+  "id": "host-idn",
+  "domain": "host-norm",
+  "axis": "host_idn",
+  "left": "host-literal",
+  "right": "host-idna",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "bcO8bmljaC5leGFtcGxl",
+  "reference": "IDNA / RFC 3492 punycode（Python stdlib idna codec）",
+  "note": "同一段 UTF-8 `münich.example`：浏览器按 IDNA 转成 A-label `xn--mnich-kva.example`；只看原始字节的服务器拿 Unicode 字节比对 vhost，两者落在不同的站。"
+}

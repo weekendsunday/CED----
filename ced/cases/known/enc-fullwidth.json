@@ -1,0 +1,15 @@
+{
+  "id": "enc-fullwidth",
+  "domain": "enc-norm",
+  "axis": "enc_fullwidth",
+  "left": "enc-strict",
+  "right": "enc-fold-width",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "JUVGJUJDJThGYWRtaW4=",
+  "reference": "Unicode 全角块 U+FF01–U+FF5E；ICU/NFKC 折叠会把全角变回 ASCII",
+  "note": "同一段 `%EF%BC%8Fadmin`（全角斜杠 `／` = U+FF0F）：只看 ASCII 的实现把它当普通字符，做全角折叠（或 NFKC）的实现把它折成 `/`。只认 `/` 的路径黑名单因此被 `／` 绕过。"
+}

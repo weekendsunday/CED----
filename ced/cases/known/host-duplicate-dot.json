@@ -1,0 +1,14 @@
+{
+  "id": "host-duplicate-dot",
+  "domain": "host-norm",
+  "axis": "host_duplicate_dot",
+  "left": "host-literal",
+  "right": "host-collapse-dots",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "ZXhhbXBsZS4uY29t",
+  "reference": "RFC 3986 reg-name 空标签 vs 归一化折叠空标签",
+  "note": "同一段 `example..com`：DNS 里空标签无效，但有的归一化把连续点折叠成单个，于是它与 `example.com` 共键。两侧缓存键 / vhost 判定据此分叉。"
+}

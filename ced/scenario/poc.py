@@ -194,61 +194,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 '''
 
-#: 分帧领域：算"前置转发多少 / 后端消费多少 / 夹带多少"
-_FRAMING_BLOCK = {
-    "imports": ("from ced.impls import reference\n"
-                "from ced.orchestrate.chain import chain_evidence"),
-    "measure_body": (
-        "    try:\n"
-        "        front_policy = reference.policy_of(FRONT)\n"
-        "        back_policy = reference.policy_of(BACK)\n"
-        "    except KeyError:\n"
-        "        return None\n"
-        "    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n"
-        "    return ev.forwarded, ev.back_consumed, ev.smuggled_len"),
-    "report_body": (
-        "        forwarded, consumed, smuggled = got\n"
-        "        print(f\"前置转发    {forwarded} 字节\")\n"
-        "        print(f\"后端消费    {consumed} 字节\")\n"
-        "        print(f\"被夹带      {smuggled} 字节\")\n"
-        "        if EXPECT[0] is not None:\n"
-        "            ok = got == tuple(EXPECT)\n"
-        "            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")"),
-}
-
-#: 路径归一化领域：算"前置认的资源 / 后端认的资源"
-_URL_BLOCK = {
-    "imports": ("from ced.impls import url_reference\n"
-                "from ced.impls.path_norm import normalize_target"),
-    "measure_body": (
-        "    try:\n"
-        "        front_policy = url_reference.policy_of(FRONT)\n"
-        "        back_policy = url_reference.policy_of(BACK)\n"
-        "    except KeyError:\n"
-        "        return None\n"
-        "    front_res = normalize_target(PAYLOAD, front_policy)\n"
-        "    forwarded = PAYLOAD\n"
-        "    if front_policy.forward_form == \"normalized\":\n"
-        "        forwarded = front_res.norm_path.encode(\"latin-1\")\n"
-        "    back_res = normalize_target(forwarded, back_policy)\n"
-        "    return front_res.norm_path, back_res.norm_path"),
-    "report_body": (
-        "        front_path, back_path = got\n"
-        "        print(f\"前置认的资源  {front_path}\")\n"
-        "        print(f\"后端认的资源  {back_path}\")\n"
-        "        print(f\"资源错位      {'是' if front_path != back_path else '否'}\")\n"
-        "        ok = (front_path != back_path) == bool(EXPECT[0])\n"
-        "        expect_mismatch = EXPECT[0] != EXPECT[1]\n"
-        "        print(f\"断言        {'PASS' if ok else 'FAIL'}\"\n"
-        "              f\"（期望错位={expect_mismatch}）\")"),
-}
-
-_BLOCKS = {"http1-framing": _FRAMING_BLOCK, "url-norm": _URL_BLOCK}
-
-
-def _render_script(*, domain: str, quant: Quantified | None, **common) -> str:
-    block = _BLOCKS.get(domain, _FRAMING_BLOCK)
-    return _SCRIPT.format(domain=domain, **block, **common)
+def _render_script(*, adapter, quant: Quantified | None, **common) -> str:
+    """脚本骨架由本模块统一提供（参数解析 / 合规门禁 / --send）；
+    「怎么算这个领域的量化指标、怎么断言」由**适配器**填（``poc_block()``）——
+    所以新增领域不需要碰这个文件。
+    """
+    return _SCRIPT.format(domain=adapter.name, **adapter.poc_block(), **common)
 
 
 # --------------------------------------------------------------------- 对外接口
@@ -285,7 +236,7 @@ def build_poc(finding, *, domain: str = DEFAULT_DOMAIN) -> Poc | None:
         steps = tuple(step.format(**values) for step in _FALLBACK_STEPS)
 
     script = _render_script(
-        domain=domain,
+        adapter=adapter,
         quant=quant,
         title=template.title,
         case_id=finding.case_id,

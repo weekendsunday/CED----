@@ -1,0 +1,16 @@
+{
+  "id": "query-drop-empty",
+  "domain": "query-norm",
+  "axis": "query_empty",
+  "left": "query-gateway",
+  "right": "query-drop-empty",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query",
+    "keys",
+    "param_count"
+  ],
+  "payload_b64": "YT0mYj0x",
+  "reference": "空值参数是否保留：多数框架保留空串；部分 WAF / 缓存丢弃空值参数",
+  "note": "同一段 `a=&b=1`：保留空值的一侧有两个参数（`a` 值为空）；丢弃空值的一侧只剩 `b=1`。参数集不同 —— 依赖『参数是否存在』的判定会分叉。"
+}

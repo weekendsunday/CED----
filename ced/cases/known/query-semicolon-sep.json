@@ -1,0 +1,16 @@
+{
+  "id": "query-semicolon-sep",
+  "domain": "query-norm",
+  "axis": "query_separators",
+  "left": "query-gateway",
+  "right": "query-semicolon-sep",
+  "expect_kind": "param_set",
+  "expect_fields": [
+    "norm_query",
+    "keys",
+    "param_count"
+  ],
+  "payload_b64": "YT0xO2I9Mg==",
+  "reference": "PHP 5.3.0 之前把 `;` 当参数分隔符；RFC 3986 §3.4 允许 `;` 作子分隔符",
+  "note": "同一段 `a=1;b=2`：只认 `&` 的一侧解析成**一个**参数 `a`（值 `1;b=2`）；认 `;` 的一侧解析成**两个**参数 `a=1`、`b=2`。前置与业务看到的参数集不同。"
+}

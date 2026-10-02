@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import threading
@@ -169,11 +170,13 @@ def _cmd_case(args: argparse.Namespace) -> int:
         sys.stdout.buffer.write(payload)
         return 0
 
-    adapter = get_adapter("http1-framing")
+    adapter = get_adapter(spec.get("domain", "http1-framing"))
     left_id, right_id = spec["left"], spec["right"]
     evaluator = Evaluator([
-        ImplSpec(impl_id=left_id, name=left_id, runner="local", policy=left_id),
-        ImplSpec(impl_id=right_id, name=right_id, runner="local", policy=right_id),
+        ImplSpec(impl_id=left_id, name=left_id, runner="local",
+                 policy=left_id, domain=adapter.name),
+        ImplSpec(impl_id=right_id, name=right_id, runner="local",
+                 policy=right_id, domain=adapter.name),
     ])
     left = evaluator(left_id, payload)
     right = evaluator(right_id, payload)
@@ -540,37 +543,113 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_impls(args: argparse.Namespace) -> int:
-    from .impls import LOCAL_AXIS_PAIRS, LOCAL_PARSERS, LOCAL_SPECS
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """验证层：**做扫描器的裁判**。
 
-    domains = ([args.domain] if getattr(args, "domain", None)
-               else sorted(LOCAL_PARSERS))
-    for domain in domains:
+    把外部发现（nuclei / Burp / HAR / curl / 普通清单）当成「待验证的假设」，
+    喂进与扫描完全相同的 oracle 链（差分 → 消融 → 判定 → 最小化），
+    输出**已证实 / 已证伪 / 证不了** —— 判定仍由内核给出，不由报告方自述。
+    """
+    from .intake import load, verify as verify_hypotheses
+
+    path = Path(args.input)
+    text = sys.stdin.read() if args.input == "-" else path.read_text(
+        encoding="utf-8", errors="replace")
+    try:
+        hypotheses = load(text, fmt=args.format)
+    except Exception as exc:
+        raise SystemExit(f"[!] 读不了这份清单：{exc}") from exc
+    if not hypotheses:
+        raise SystemExit("[!] 这份清单里没有可验证的条目（格式识别到了，但内容为空）")
+
+    try:
+        results = verify_hypotheses(hypotheses, domains=args.domain or None)
+    except Exception as exc:
+        raise SystemExit(f"[!] 验证过程出错：{type(exc).__name__}: {exc}") from exc
+
+    order = {"confirmed": 0, "refuted": 1, "unverifiable": 2}
+    results = sorted(results, key=lambda v: (order.get(v.verdict, 9), v.domain))
+    counts = {k: sum(1 for v in results if v.verdict == k)
+              for k in ("confirmed", "refuted", "unverifiable")}
+
+    print("-" * 66)
+    print(f"[验证] 共 {len(results)} 条假设　"
+          f"已证实 {counts['confirmed']}　已证伪 {counts['refuted']}　"
+          f"证不了 {counts['unverifiable']}")
+    labels = {"confirmed": "已证实", "refuted": "已证伪", "unverifiable": "证不了"}
+    for item in results:
+        head = f"  [{labels.get(item.verdict, item.verdict)}] {item.hypothesis.target[:60]}"
+        if item.verdict == "confirmed":
+            print(f"{head}\n        {item.domain}　{item.left} ↔ {item.right}　"
+                  f"{item.level}（{item.kind}）")
+        else:
+            print(f"{head}\n        {item.detail[:100]}")
+
+    if args.out:
+        lines = ["# 外部发现验证报告", "",
+                 f"- 清单：`{args.input}`　共 {len(results)} 条",
+                 f"- 已证实：{counts['confirmed']}　已证伪：{counts['refuted']}　"
+                 f"证不了：{counts['unverifiable']}", "",
+                 "> 判定由确定性内核给出（差分 + 消融），不是报告方的自述。",
+                 "> `已证实` = 至少一对实现产生了结构分歧；分级见 `level` 列。", "",
+                 "| 结论 | 目标 | 领域 | 对照 | 级别 | 类型 | 说明 |",
+                 "|---|---|---|---|---|---|---|"]
+        for item in results:
+            lines.append(
+                f"| {labels.get(item.verdict, item.verdict)} | "
+                f"`{item.hypothesis.target[:70]}` | {item.domain or '—'} | "
+                f"{item.left} ↔ {item.right} | {item.level or '—'} | "
+                f"{item.kind or '—'} | {(item.detail or item.reason)[:90]} |")
+        Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"[产物] {args.out}")
+    if args.json:
+        from dataclasses import asdict
+
+        payload = [
+            {"verdict": v.verdict, "domain": v.domain, "left": v.left,
+             "right": v.right, "level": v.level, "kind": v.kind,
+             "reason": v.reason, "evidence": v.evidence,
+             "minimized_b64": v.minimized_b64, "detail": v.detail,
+             "hypothesis": asdict(v.hypothesis)}
+            for v in results
+        ]
+        Path(args.json).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[产物] {args.json}")
+    return 0
+
+
+def _cmd_impls(args: argparse.Namespace) -> int:
+    from .impls import axis_pairs, domains, local_specs, policy_for
+
+    for domain in ([args.domain] if getattr(args, "domain", None) else domains()):
         print(f"=== 领域 {domain} ===")
-        for spec in LOCAL_SPECS[domain]():
-            policy = local_policy(domain, spec.impl_id)
+        base = _base_of(domain)
+        for spec in local_specs(domain):
+            policy = policy_for(domain, spec.impl_id)
             delta = {k: v for k, v in policy.__dict__.items()
-                     if k != "name" and _base_of(domain).get(k) != v}
+                     if k != "name" and base.get(k) != v}
             print(f"  {spec.impl_id:<26} 偏离基线: {delta or '(基线本身)'}")
         print("\n  定向对照：")
-        for axis, (left, right) in LOCAL_AXIS_PAIRS[domain].items():
+        for axis, (left, right) in axis_pairs(domain).items():
             print(f"    {axis:<20} {left} ↔ {right}")
         print()
     return 0
 
 
-def local_policy(domain: str, impl_id: str):
-    if domain == "url-norm":
-        from .impls import url_reference
-        return url_reference.policy_of(impl_id)
-    return reference.policy_of(impl_id)
-
-
 def _base_of(domain: str) -> dict:
-    if domain == "url-norm":
-        from .impls import url_reference
-        return url_reference.BASE
-    return reference.BASE
+    """某个领域的基线策略 —— 从该领域 ``policy_of`` **所属模块**里取 ``BASE``。
+
+    刻意不按领域名拼模块名：``url-norm`` 的参照模块叫 ``url_reference``（不是
+    ``url_norm_reference``），``host-norm`` 同理 —— 拼名字必然会错。
+    """
+    import importlib
+
+    from .impls import local_parser
+
+    policy_of, _ = local_parser(domain)
+    module = importlib.import_module(policy_of.__module__)
+    return getattr(module, "BASE", {})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -636,10 +715,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--show", action="store_true", help="即使无分歧也打印两侧观测")
     p.set_defaults(func=_cmd_probe)
 
-    i = sub.add_parser("impls", help="列出参照实现与定向对照（默认两个领域都列）")
+    i = sub.add_parser("impls", help="列出参照实现与定向对照（默认所有领域）")
     i.add_argument("--domain", default=None, choices=sorted(ADAPTERS),
                    help="只看某个领域")
     i.set_defaults(func=_cmd_impls)
+
+    vf = sub.add_parser(
+        "verify", help="验证外部发现：把 nuclei/Burp/清单的命中当假设，用同一条 oracle 链证实或证伪")
+    vf.add_argument("input", help="清单文件；用 - 从 stdin 读")
+    vf.add_argument("--format", default="auto",
+                    choices=["auto", "nuclei", "burp", "har", "curl", "list"],
+                    help="输入格式（默认按内容与文件名自动识别）")
+    vf.add_argument("--domain", action="append", default=None,
+                    choices=sorted(ADAPTERS), help="只用这些领域验证（可重复）")
+    vf.add_argument("--out", default=None, help="把验证报告写成 Markdown")
+    vf.add_argument("--json", default=None, help="把验证结果写成 JSON")
+    vf.set_defaults(func=_cmd_verify)
 
     pc = sub.add_parser("agent", help="闭环 agent：模型看着执行结果决定下一步往哪搜（判定仍在内核）")
     pc.add_argument("--goal", default="在内置语料之外，找出新的可升级耦合误差",

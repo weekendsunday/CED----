@@ -37,6 +37,10 @@ class NormPolicy:
     percent_decode: str = "never"        # never | once | twice
     # 百分号里十六进制的大小写接受度（RFC 3986 §2.1 只承认大写）
     percent_case: str = "strict"         # strict | lenient
+    # 过长 UTF-8 序列（如 %c0%ae 表示 `.`）：RFC 3629 禁止，但历史实现接受
+    overlong_utf8: str = "reject"        # reject | accept
+    # 解码后遇到 NUL 字节（%00）
+    null_byte: str = "keep"              # keep | truncate
     # 反斜杠：普通字符，还是路径分隔符
     backslash: str = "literal"           # literal | separator
     # 连续斜杠
@@ -87,34 +91,84 @@ def _is_hex(ch: str, case: str) -> bool:
     return ch in (_HEX_UPPER if case == "strict" else _HEX_BOTH)
 
 
-def _decode_once(text: str, case: str) -> tuple[str, bool]:
-    """解一层百分号编码。返回 (结果, 是否发生变化)。不合法/残缺的 % 原样保留。"""
-    out: list[str] = []
+def _percent_to_bytes(text: str, case: str) -> tuple[bytes, bool]:
+    """把百分号转义还原成**字节**（其余字符按其 UTF-8 字节原样带上）。
+
+    返回 (字节, 是否发生过还原)。不合法/残缺的 ``%`` 原样保留。
+    """
+    out = bytearray()
     changed = False
-    i = 0
-    n = len(text)
+    i, n = 0, len(text)
     while i < n:
         # 需要 "%" + 两位十六进制，即 i+3 <= n
         if (text[i] == "%" and i + 3 <= n
                 and _is_hex(text[i + 1], case) and _is_hex(text[i + 2], case)):
-            out.append(chr(int(text[i + 1:i + 3], 16)))
+            out.append(int(text[i + 1:i + 3], 16))
             i += 3
             changed = True
         else:
-            out.append(text[i])
+            out.extend(text[i].encode("utf-8"))
             i += 1
-    return "".join(out), changed
+    return bytes(out), changed
 
 
-def _decode(text: str, layers: int, case: str) -> tuple[str, int]:
-    """按层数解码，返回 (结果, 真正生效的层数)。"""
+def _utf8_to_text(raw: bytes, *, allow_overlong: bool) -> tuple[str | None, str | None]:
+    """手写 UTF-8 解码：**能按策略接受过长序列**（标准库会一律拒绝）。
+
+    返回 ``(文本, 错误原因)``。过长序列在 ``allow_overlong`` 下按其最短形式还原 ——
+    ``%c0%ae`` 于是变成 ``.``，这正是"过长编码绕过"的机理。
+    """
+    out: list[str] = []
+    i, n = 0, len(raw)
+    while i < n:
+        byte = raw[i]
+        if byte < 0x80:
+            out.append(chr(byte))
+            i += 1
+            continue
+        if 0xC0 <= byte <= 0xDF:
+            length, code = 2, byte & 0x1F
+        elif 0xE0 <= byte <= 0xEF:
+            length, code = 3, byte & 0x0F
+        elif 0xF0 <= byte <= 0xF7:
+            length, code = 4, byte & 0x07
+        else:                       # 孤立续字节 / 0xF8+ / 0x80..0xBF
+            return None, "bad_utf8_lead"
+        if i + length > n:
+            return None, "truncated_utf8"
+        for j in range(1, length):
+            cont = raw[i + j]
+            if cont & 0xC0 != 0x80:
+                return None, "bad_utf8_continuation"
+            code = (code << 6) | (cont & 0x3F)
+        minimal = {2: 0x80, 3: 0x800, 4: 0x10000}[length]
+        if code < minimal:          # 过长编码
+            if not allow_overlong:
+                return None, "overlong_utf8"
+        if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+            return None, "bad_codepoint"
+        out.append(chr(code))
+        i += length
+    return "".join(out), None
+
+
+def _decode(text: str, layers: int, case: str, *, allow_overlong: bool
+            ) -> tuple[str, int, str | None]:
+    """按层数解码，返回 (结果, 真正生效的层数, 错误原因)。
+
+    顺序是"转义 → 字节 → 按策略 UTF-8 解码"：只有这样才能把过长编码表达出来。
+    """
     done = 0
     for _ in range(layers):
-        text, changed = _decode_once(text, case)
+        raw, changed = _percent_to_bytes(text, case)
         if not changed:
             break
+        decoded, error = _utf8_to_text(raw, allow_overlong=allow_overlong)
+        if error is not None:
+            return text, done, error
+        text = decoded
         done += 1
-    return text, done
+    return text, done, None
 
 
 def _remove_dot_segments(path: str) -> tuple[str, bool]:
@@ -201,9 +255,19 @@ def normalize_target(raw_target: bytes, policy: NormPolicy) -> NormResult:
 
     # ① 先解码（顺序刻意固定，见模块 docstring）
     layers = _DECODE_LAYERS.get(policy.percent_decode, 0)
-    path, decoded = _decode(path, layers, policy.percent_case)
+    path, decoded, error = _decode(path, layers, policy.percent_case,
+                                   allow_overlong=policy.overlong_utf8 == "accept")
+    if error is not None:
+        return NormResult(ok=False, status=400, reason=error, norm_path=path,
+                          query=query, segments=_segments_of(path),
+                          decoded=decoded, notes=[f"解码失败：{error}"])
 
-    # ② 结构归一化
+    # ② NUL 截断 —— 历史实现把 %00 当成字符串结束（"空字节截断"）
+    if policy.null_byte == "truncate" and "\x00" in path:
+        path = path.split("\x00", 1)[0]
+        notes.append("在 NUL 处截断")
+
+    # ③ 结构归一化
     if policy.backslash == "separator":
         path = path.replace("\\", "/")
     if policy.duplicate_slash == "collapse":

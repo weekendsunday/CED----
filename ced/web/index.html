@@ -116,6 +116,7 @@
 
 <nav class="tabs">
   <button class="tab active" data-tab="scan">扫描</button>
+  <button class="tab" data-tab="verify">验证外部发现</button>
   <button class="tab" data-tab="ledger">提案台账</button>
   <button class="tab" data-tab="probe">探测文件</button>
   <button class="tab" data-tab="cases">内置案例</button>
@@ -127,6 +128,8 @@
   <section class="panel active" id="tab-scan">
     <div class="card">
       <div class="row" style="margin-top:0">
+        <label>领域</label>
+        <select id="scan-domain" style="min-width:200px"></select>
         <label>模式</label>
         <select id="scan-mode">
           <option value="axis">axis（单轴扫描）</option>
@@ -240,9 +243,11 @@
       <div id="fileinfo" class="note"></div>
 
       <div class="row">
+        <label>领域</label>
+        <select id="probe-domain" style="min-width:200px"></select>
         <label>比较方式</label>
         <select id="mode">
-          <option value="all">全部组合（内置 9 个实现两两比对）</option>
+          <option value="all">全部组合（该领域的全部实现两两比对）</option>
           <option value="pair">指定一对</option>
         </select>
         <span id="pairbox" style="display:none">
@@ -287,6 +292,33 @@
       <div id="checkresult" style="margin-top:14px"></div>
     </div>
   </section>
+  <!-- ============ 验证外部发现 ============ -->
+  <section class="panel" id="tab-verify">
+    <div class="card">
+      <p style="margin-top:0;color:var(--dim)">
+        把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当作<strong>待验证的假设</strong>，
+        用与扫描<strong>完全相同</strong>的差分 + 消融链路去证实或证伪。
+        <strong>结论由确定性内核给出，不看报告方的自述</strong> —— 这就是"做扫描器的裁判"。</p>
+      <textarea id="vfy-text" rows="8"
+        placeholder="粘贴一份清单：nuclei 的 JSONL、Burp 的 sitemap XML、HAR、curl 命令行，或每行一条 URL"
+        style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:12px/1.55 Consolas,Menlo,monospace;resize:vertical"></textarea>
+      <div class="row">
+        <label>格式</label>
+        <select id="vfy-fmt">
+          <option value="auto">自动识别</option>
+          <option value="nuclei">nuclei</option>
+          <option value="burp">Burp sitemap</option>
+          <option value="har">HAR</option>
+          <option value="curl">curl</option>
+          <option value="list">普通清单</option>
+        </select>
+        <button class="primary" id="vfy-go">开始验证</button>
+        <span class="note" id="vfy-hint">每条假设都会在全部已注册领域上试一遍</span>
+      </div>
+    </div>
+    <div id="vfy-result"></div>
+  </section>
+
 </main>
 
 <script>
@@ -337,7 +369,18 @@ $('#mode').onchange = e => {
   $('#pairbox').style.display = e.target.value === 'pair' ? '' : 'none';
 };
 
-/* ---------- 载入内置实现 ---------- */
+/* ---------- 载入领域与内置实现 ---------- */
+let DOMAINS = [];
+fetch('/api/domains').then(r => r.json()).then(d => {
+  DOMAINS = d.domains || [];
+  const opts = DOMAINS.map(x =>
+    `<option value="${esc(x.name)}">${esc(x.name)}（${x.impls} 实现 · ${x.pairs} 对轴）</option>`).join('');
+  ['#scan-domain', '#probe-domain'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.innerHTML = opts;
+  });
+}).catch(() => {});
+
 fetch('/api/impls').then(r => r.json()).then(d => {
   ['#left','#right'].forEach((sel, i) => {
     const el = $(sel);
@@ -357,6 +400,7 @@ $('#go').onclick = async () => {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         data_b64: fileB64,
+        domain: $('#probe-domain') ? $('#probe-domain').value : 'http1-framing',
         mode: $('#mode').value,
         left: $('#left').value, right: $('#right').value,
         topology: $('#topology').value.trim()
@@ -592,7 +636,7 @@ $('#scan-go').onclick = async () => {
   $('#scan-err').innerHTML = '';
   $('#scan-go').disabled = true;
   const body = {
-    domain: 'http1-framing',
+    domain: $('#scan-domain') ? $('#scan-domain').value : 'http1-framing',
     mode: $('#scan-mode').value,
     limit: numOr($('#scan-limit'), 60),
     seed: numOr($('#scan-seed'), 42),
@@ -901,6 +945,57 @@ function renderScanEvidence(f){
 
   h += `</div>`;
   box.innerHTML = h;
+}
+
+/* ================= 验证外部发现 ================= */
+const VFY_LABEL = {confirmed:'已证实', refuted:'已证伪', unverifiable:'证不了'};
+
+$('#vfy-go').onclick = async () => {
+  const out = $('#vfy-result');
+  const text = $('#vfy-text').value;
+  if (!text.trim()){ out.innerHTML = '<div class="err">先贴一份清单</div>'; return; }
+  out.innerHTML = '<div class="card">验证中…</div>';
+  $('#vfy-go').disabled = true;
+  try {
+    const res = await fetch('/api/verify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, fmt: $('#vfy-fmt').value})
+    });
+    renderVerify(await res.json());
+  } catch (err) {
+    out.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+  }
+  $('#vfy-go').disabled = false;
+};
+
+function renderVerify(d){
+  const out = $('#vfy-result');
+  if (d.error) { out.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
+  const c = d.counts || {};
+  let h = `<div class="summary">
+    <span><span class="k">共</span><b>${d.items.length}</b> 条假设</span>
+    <span><span class="k">已证实</span><b class="${c.confirmed ? 'bad' : 'good'}">${c.confirmed || 0}</b></span>
+    <span><span class="k">已证伪</span><b class="good">${c.refuted || 0}</b></span>
+    <span><span class="k">证不了</span><b class="warn">${c.unverifiable || 0}</b></span>
+  </div>`;
+  h += d.items.map(v => {
+    const cls = v.verdict === 'confirmed'
+      ? (v.level === 'security' ? 'security' : 'unknown') : 'compatibility';
+    let body;
+    if (v.verdict === 'confirmed'){
+      body = `<div class="kv"><span class="k">领域</span>${esc(v.domain)}
+          　<span class="k">对照</span>${esc(v.left)} ↔ ${esc(v.right)}</div>
+        <div class="kv"><span class="k">级别</span>${esc(levelLabel(v.level))}（${esc(v.kind)}）</div>
+        <div class="kv"><span class="k">判定理由</span>${esc(v.reason)}</div>`
+        + (v.evidence ? `<div class="kv"><span class="k">消融证据</span>${esc(v.evidence)}</div>` : '');
+    } else {
+      body = `<div class="kv">${esc(v.detail || v.reason || '')}</div>`;
+    }
+    return `<div class="finding ${v.verdict === 'confirmed' ? '' : 'unknown'}">
+      <h3>${esc(v.target)}<span class="badge ${cls}">${VFY_LABEL[v.verdict] || esc(v.verdict)}</span></h3>
+      ${body}</div>`;
+  }).join('');
+  out.innerHTML = h;
 }
 
 /* ================= 提案台账 ================= */

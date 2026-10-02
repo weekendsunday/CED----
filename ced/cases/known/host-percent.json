@@ -1,0 +1,14 @@
+{
+  "id": "host-percent",
+  "domain": "host-norm",
+  "axis": "host_percent",
+  "left": "host-literal",
+  "right": "host-percent-decode",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "ZXhhJTZEcGxlLmNvbQ==",
+  "reference": "RFC 3986 reg-name pct-encoded vs 反向代理对 Host 的解码",
+  "note": "同一段 `exa%6Dple.com`：有的反向代理会解码 Host 后再路由 / 算缓存键，认成 `example.com`；原样保留的实现认成 `exa%6Dple.com`。两者分叉即为缓存键错位 / 虚拟主机绕过。"
+}

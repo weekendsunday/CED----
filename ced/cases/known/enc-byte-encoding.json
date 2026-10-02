@@ -1,0 +1,15 @@
+{
+  "id": "enc-byte-encoding",
+  "domain": "enc-norm",
+  "axis": "enc_byte_encoding",
+  "left": "enc-strict",
+  "right": "enc-latin1",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "JUMzJUE5",
+  "reference": "UTF-8 与 Latin-1 的经典混淆；网关按一种编码检查、后端按另一种执行",
+  "note": "同一段 `%C3%A9`（字节 C3 A9）：按 UTF-8 解释是 `é`（U+00E9），按 Latin-1 解释是 `Ã©`（U+00C3 U+00A9）。两侧对同一份字节给出不同的文本，检查与执行就落在不同的字符串上。"
+}

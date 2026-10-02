@@ -1,0 +1,16 @@
+{
+  "id": "enc-overlong-utf8",
+  "domain": "enc-norm",
+  "axis": "enc_overlong_utf8",
+  "left": "enc-strict",
+  "right": "enc-overlong-accept",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "accepted",
+    "status",
+    "norm_text"
+  ],
+  "payload_b64": "JWMwJWFmYWRtaW4=",
+  "reference": "RFC 3629（UTF-8 必须最短编码）；IIS 4.0/5.0 Unicode 编码漏洞 CVE-2000-0884",
+  "note": "同一段 `%c0%afadmin`：严格解码器按 RFC 3629 拒绝过长序列（`%c0%af` 本应是不合法的 `/` 的过长编码），而接受过长编码的实现把它解成 `/admin`。检查侧判 400，执行侧照样看到 `/admin` → 路径/关键字过滤器被绕过。"
+}

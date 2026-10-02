@@ -1,0 +1,15 @@
+{
+  "id": "enc-unicode-nfd",
+  "domain": "enc-norm",
+  "axis": "enc_unicode_nfd",
+  "left": "enc-strict",
+  "right": "enc-nfd",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "Y2FmJUMzJUE5",
+  "reference": "Unicode Standard Annex #15（NFD）；macOS 文件系统用 NFD",
+  "note": "同一段 `caf%C3%A9`（预组合的 `é` = U+00E9）：不做规范化的实现看到 `café`（4 个码点），做 NFD 的实现拆成 `cafe` + U+0301（5 个码点）。用 NFC 做匹配的检查侧与用 NFD 的执行侧对同一串字符给出不同序列。"
+}

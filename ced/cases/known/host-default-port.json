@@ -1,0 +1,14 @@
+{
+  "id": "host-default-port",
+  "domain": "host-norm",
+  "axis": "host_default_port",
+  "left": "host-literal",
+  "right": "host-strip-default-port",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "port"
+  ],
+  "payload_b64": "ZXhhbXBsZS5jb206ODA=",
+  "reference": "RFC 7230 Host 端口规范形式 vs 缓存 / 路由键归一化",
+  "note": "同一段 `example.com:80`：朴素处理器保留端口 80；把默认端口归一掉的实现认为它与 `example.com` 是同一个键。缓存键 / 路由键分叉即为缓存投毒或虚拟主机绕过。"
+}

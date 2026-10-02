@@ -1,0 +1,15 @@
+{
+  "id": "enc-nul",
+  "domain": "enc-norm",
+  "axis": "enc_nul",
+  "left": "enc-strict",
+  "right": "enc-nul-truncate",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "norm_text",
+    "codepoints"
+  ],
+  "payload_b64": "YWRtaW4lMDAudHh0",
+  "reference": "C 字符串 NUL 截断；PHP `%00` 注入（`shell.php%00.jpg` 骗过扩展名白名单）",
+  "note": "同一段 `admin%00.txt`：不截断的实现看到 `admin\\u0000.txt`（含 NUL），在 NUL 处截断的实现看到 `admin`。检查侧按完整字符串查后缀，执行侧到 NUL 就停 —— 扩展名/路径白名单被绕过。"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "enc-lone-surrogate",
+  "domain": "enc-norm",
+  "axis": "enc_lone_surrogate",
+  "left": "enc-strict",
+  "right": "enc-surrogate-keep",
+  "expect_kind": "enc_interpretation",
+  "expect_fields": [
+    "accepted",
+    "status",
+    "norm_text"
+  ],
+  "payload_b64": "JUVEJUEwJTgw",
+  "reference": "RFC 3629（UTF-8 不得编码代理项）；CESU-8 把 U+D800 编成 `%ED%A0%80`",
+  "note": "同一段 `%ED%A0%80`（CESU-8 编码的孤立代理项 U+D800）：严格解码器拒绝（400），把字节直接映射到 UTF-16 码元的实现解出 `U+D800`。两侧对同一份字节的接受性不同，可造成过滤器绕过。"
+}

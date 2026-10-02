@@ -26,6 +26,7 @@ from ..impls import url_reference
 from ..impls.path_norm import normalize_target
 from ..minimize.ddmin import minimize_segments
 from ..mutate import url_axes
+from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
 KIND_PATH_TRAVERSAL = "path_traversal"          # 差异来自 `..` 被解算 → 跨目录
@@ -89,6 +90,7 @@ def meta_of(kind: str) -> dict:
     return _KIND_MAP.get(kind, _KIND_MAP[KIND_SYNTAX_DETAIL])
 
 
+@register
 class UrlNormAdapter:
     """URL / 路径归一化领域。"""
 
@@ -107,6 +109,10 @@ class UrlNormAdapter:
 
     def specs(self) -> list[ImplSpec]:
         return url_reference.specs()
+
+    def local_parser(self) -> tuple:
+        """本地解析器：路径归一化内核 + 归一化参照实现的策略表。"""
+        return url_reference.policy_of, normalize_target
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(url_reference.AXIS_PAIRS)
@@ -159,6 +165,34 @@ class UrlNormAdapter:
         return minimize_segments(payload, predicate)
 
     # ---------------------------------------------------------------- 量化
+
+    def poc_block(self) -> dict:
+        """端到端 PoC 脚本的路径片段：算"前置认的资源 / 后端认的资源"。"""
+        return {
+            "imports": ("from ced.impls import url_reference\n"
+                        "from ced.impls.path_norm import normalize_target"),
+            "measure_body": (
+                "    try:\n"
+                "        front_policy = url_reference.policy_of(FRONT)\n"
+                "        back_policy = url_reference.policy_of(BACK)\n"
+                "    except KeyError:\n"
+                "        return None\n"
+                "    front_res = normalize_target(PAYLOAD, front_policy)\n"
+                "    forwarded = PAYLOAD\n"
+                "    if front_policy.forward_form == \"normalized\":\n"
+                "        forwarded = front_res.norm_path.encode(\"latin-1\")\n"
+                "    back_res = normalize_target(forwarded, back_policy)\n"
+                "    return front_res.norm_path, back_res.norm_path"),
+            "report_body": (
+                "        front_path, back_path = got\n"
+                "        print(f\"前置认的资源  {front_path}\")\n"
+                "        print(f\"后端认的资源  {back_path}\")\n"
+                "        print(f\"资源错位      {'是' if front_path != back_path else '否'}\")\n"
+                "        ok = (front_path != back_path) == bool(EXPECT[0])\n"
+                "        expect_mismatch = EXPECT[0] != EXPECT[1]\n"
+                "        print(f\"断言        {'PASS' if ok else 'FAIL'}\"\n"
+                "              f\"（期望错位={expect_mismatch}）\")"),
+        }
 
     def quantify(self, payload: bytes, left_id: str, right_id: str):
         """量化：**同一段 target 被前置与后端解成了不同资源**。

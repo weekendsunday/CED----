@@ -9,6 +9,7 @@ from ..impls import reference
 from ..mutate import axes, engine
 from ..minimize.ddmin import minimize_headers
 from ..orchestrate.chain import chain_evidence
+from .registry import register
 
 # ---- 分歧类型（判定器按此升级/降级）----
 KIND_FRAMING_BOUNDARY = "framing_boundary"          # 消费字节数不同 —— 走私的结构性前提
@@ -51,9 +52,9 @@ def meta_of(kind: str) -> dict:
     return _KIND_MAP.get(kind, _KIND_MAP[KIND_SYNTAX_DETAIL])
 
 
+@register
 class Http1FramingAdapter:
     """HTTP/1.1 分帧领域。"""
-
     name = "http1-framing"
     compare_keys: tuple[str, ...] = DEFAULT_COMPARE_KEYS
     #: 具备"分歧落在消息边界上"结构性前提的类型（判定器据此决定能否升级）
@@ -72,6 +73,11 @@ class Http1FramingAdapter:
 
     def specs(self) -> list[ImplSpec]:
         return reference.specs()
+
+    def local_parser(self) -> tuple:
+        """本地解析器：分帧内核 + 分帧参照实现的策略表。"""
+        from ..impls.http_reader import parse_request
+        return reference.policy_of, parse_request
 
     def pairs(self) -> dict[str, tuple[str, str]]:
         return dict(reference.AXIS_PAIRS)
@@ -114,6 +120,29 @@ class Http1FramingAdapter:
         return ablate_headers(div.payload, div, evaluate, self.compare_keys)
 
     # ---------------------------------------------------------------- 量化
+
+    def poc_block(self) -> dict:
+        """端到端 PoC 脚本的分帧片段：算"前置转发 / 后端消费 / 夹带"三个数。"""
+        return {
+            "imports": ("from ced.impls import reference\n"
+                        "from ced.orchestrate.chain import chain_evidence"),
+            "measure_body": (
+                "    try:\n"
+                "        front_policy = reference.policy_of(FRONT)\n"
+                "        back_policy = reference.policy_of(BACK)\n"
+                "    except KeyError:\n"
+                "        return None\n"
+                "    ev = chain_evidence(PAYLOAD, front_policy, back_policy, FRONT, BACK)\n"
+                "    return ev.forwarded, ev.back_consumed, ev.smuggled_len"),
+            "report_body": (
+                "        forwarded, consumed, smuggled = got\n"
+                "        print(f\"前置转发    {forwarded} 字节\")\n"
+                "        print(f\"后端消费    {consumed} 字节\")\n"
+                "        print(f\"被夹带      {smuggled} 字节\")\n"
+                "        if EXPECT[0] is not None:\n"
+                "            ok = got == tuple(EXPECT)\n"
+                "            print(f\"断言        {'PASS' if ok else 'FAIL'}（期望 {EXPECT}）\")"),
+        }
 
     def quantify(self, payload: bytes, left_id: str, right_id: str):
         """量化：前置转发出去的字节里，后端只消费了多少 —— 差额即被夹带字节数。"""

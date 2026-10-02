@@ -1,0 +1,14 @@
+{
+  "id": "host-trailing-dot",
+  "domain": "host-norm",
+  "axis": "host_trailing_dot",
+  "left": "host-literal",
+  "right": "host-strip-dot",
+  "expect_kind": "host_interpretation",
+  "expect_fields": [
+    "norm_host"
+  ],
+  "payload_b64": "ZXhhbXBsZS5jb20u",
+  "reference": "DNS 根标签 / nginx server_name 与 WHATWG URL Host 解析",
+  "note": "同一段 `example.com.`：朴素 Host 处理器（host-literal）原样认成 `example.com.`；剥尾随点的实现（nginx server_name / 浏览器）认成 `example.com`。前置按自己的结果选路由/算缓存键、后端按自己的结果选站，两者分叉即为虚拟主机绕过或缓存投毒。"
+}

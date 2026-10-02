@@ -5,262 +5,633 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CED — 产品耦合误差检测</title>
 <style>
-  :root{
-    --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#1c2024; --dim:#6b7480;
-    --accent:#2c6ef2; --bad:#d93b3b; --warn:#c8811a; --good:#1f8a4c;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-       font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-  header{padding:22px 28px 14px}
-  h1{margin:0;font-size:19px;letter-spacing:.3px}
-  .sub{margin:6px 0 0;color:var(--dim);font-size:13px}
-  nav.tabs{display:flex;gap:6px;padding:0 28px;border-bottom:1px solid var(--line);
-           background:var(--card)}
-  .tab{border:0;background:none;padding:11px 16px;cursor:pointer;font-size:14px;
-       color:var(--dim);border-bottom:2px solid transparent}
-  .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-  main{padding:20px 28px 60px;max-width:1100px}
-  .panel{display:none} .panel.active{display:block}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-        padding:18px;margin-bottom:16px}
-  .drop{border:2px dashed #c6ccd6;border-radius:10px;padding:34px;text-align:center;
-        color:var(--dim);cursor:pointer;transition:.15s;background:#fbfcfd}
-  .drop.hot{border-color:var(--accent);background:#eef4ff;color:var(--accent)}
-  .drop b{color:var(--ink)}
-  button.primary{background:var(--accent);color:#fff;border:0;border-radius:8px;
-                 padding:10px 20px;font-size:14px;cursor:pointer}
-  button.primary:disabled{background:#b8c2d0;cursor:not-allowed}
-  button.ghost{background:#fff;border:1px solid var(--line);border-radius:8px;
-               padding:8px 14px;cursor:pointer}
-  .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:14px}
-  label{color:var(--dim);font-size:13px}
-  select,input[type=text]{padding:7px 10px;border:1px solid var(--line);border-radius:7px;
-                          font-size:13px;background:#fff;min-width:120px}
-  pre{background:#f2f4f7;border:1px solid var(--line);border-radius:8px;padding:12px;
-      overflow:auto;font:12px/1.55 Consolas,Menlo,monospace;white-space:pre-wrap;
-      word-break:break-all;margin:8px 0 0}
-  .summary{display:flex;gap:22px;flex-wrap:wrap;padding:14px 18px;background:var(--card);
-           border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
-  .summary .k{color:var(--dim);font-size:12px;margin-right:6px}
-  .good{color:var(--good);font-weight:700}
-  .bad{color:var(--bad);font-weight:700}
-  .warn{color:var(--warn);font-weight:700}
-  .finding{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--bad);
-           border-radius:10px;padding:16px;margin-bottom:14px}
-  .finding.unknown{border-left-color:var(--warn)}
-  .finding h3{margin:0 0 10px;font-size:14px;font-weight:600}
-  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;
-         font-weight:700;margin-left:8px;vertical-align:1px}
-  .badge.security{background:#fdeaea;color:var(--bad)}
-  .badge.unknown{background:#fdf3e2;color:var(--warn)}
-  .badge.compatibility{background:#eef1f4;color:var(--dim)}
-  table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
-  th{color:var(--dim);font-weight:600;font-size:12px}
-  tr.diff{background:#fff8f8}
-  tr.diff td{color:#8a1f1f}
-  tr.diff td:first-child::after{content:" ←";color:var(--bad)}
-  .kv{margin:5px 0;font-size:13px}
-  .kv .k{color:var(--dim);display:inline-block;min-width:76px}
-  .err{background:#fdeaea;border:1px solid #f3c4c4;color:#8a1f1f;padding:12px 16px;
-       border-radius:8px}
-  .note{color:var(--dim);font-size:12.5px;margin-top:6px}
-  .caselist{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
-  .caseitem{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
-  .caseitem:hover{background:#f2f6ff}
-  .caseitem.sel{background:#eaf1ff}
-  .caseitem .id{font-weight:600}
-  .caseitem .meta{color:var(--dim);font-size:12px}
-  .split{display:grid;grid-template-columns:320px 1fr;gap:18px}
-  .ok{color:var(--good)} .no{color:var(--bad)}
-  .checkitem{padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
-  .progress{height:10px;background:#eceff3;border-radius:6px;overflow:hidden;margin-top:12px}
-  .progress .bar{height:100%;background:var(--accent);width:0;transition:width .2s}
-  .log{max-height:190px;overflow:auto;background:#f2f4f7;border:1px solid var(--line);
-       border-radius:8px;padding:8px 12px;font:12px/1.55 Consolas,Menlo,monospace}
-  .log .l{white-space:pre-wrap;word-break:break-all}
-  .evlist{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px;
-          margin-top:10px}
-  .evitem{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
-  .evitem:hover{background:#f2f6ff}
-  .evitem.sel{background:#eaf1ff}
-  .evitem .id{font-weight:600;font-size:13px}
-  .evitem .meta{color:var(--dim);font-size:12px}
-  tr.clickable{cursor:pointer}
-  tr.clickable:hover{background:#f2f6ff}
-  .sect{margin-top:14px}
-  .boundary{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.5px;
-            color:var(--good);background:#e9f6ee;border:1px solid #c4e6d2;
-            border-radius:20px;padding:1px 10px;margin:2px 0 6px}
-  .clue{background:#eef0f3;border:1px solid var(--line);border-radius:8px;
-        padding:12px 14px;color:var(--dim);font-size:12.5px;line-height:1.6}
-  .statcards{display:flex;gap:14px;flex-wrap:wrap}
-  .statcard{background:var(--card);border:1px solid var(--line);border-radius:10px;
-            padding:12px 18px;min-width:118px}
-  .statcard .v{font-size:22px;font-weight:700;line-height:1.3}
-  .statcard .k{color:var(--dim);font-size:12px}
-  .heat{border-collapse:collapse;font-size:12.5px;width:auto;margin:0}
-  .heat th,.heat td{border:1px solid var(--line);padding:6px 10px;text-align:center}
-  .heat th{background:#fbfcfd;color:var(--dim);font-size:12px;font-weight:600}
-  .heat td{font-variant-numeric:tabular-nums}
-  .heat td.diag{background:var(--bg);color:#c3c9d2}
+/* ==========================================================================
+   设计令牌（色板 / 字号 / 间距 / 圆角 / 阴影）
+   单一强调色 + 三个语义色（安全级 / 待复核 / 兼容性）；浅色为主，零外部资源。
+   ========================================================================== */
+:root{
+  --bg:#f5f6f8;
+  --surface:#ffffff;
+  --surface-2:#f0f2f5;
+  --line:#e3e6ec;
+  --line-2:#ccd2dc;
+  --ink:#161a1f;
+  --ink-2:#49515c;
+  --ink-3:#7c848f;
+  --accent:#2a5fd6;
+  --accent-soft:#e9f0fd;
+  --good:#177d47;
+  --good-soft:#e7f4ec;
+  --good-line:#c2e4d0;
+  --warn:#8f5b10;
+  --warn-soft:#fbf1dd;
+  --warn-line:#ecd7aa;
+  --bad:#bd2b2b;
+  --bad-soft:#fbeaea;
+  --bad-line:#f0c6c6;
+
+  --fs-1:12px; --fs-2:13px; --fs-3:14px; --fs-4:16px; --fs-5:20px; --fs-6:28px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+  --r1:6px; --r2:10px; --r3:14px;
+  --shadow:0 1px 2px rgba(16,24,40,.05);
+  --sans:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  --mono:ui-monospace,Consolas,Menlo,monospace;
+  --shell:1280px;
+
+  /* 既有 JS 内联样式里引用的旧变量名，保留别名，避免 var() 失效 */
+  --dim:var(--ink-3);
+}
+
+/* ==========================================================================
+   基底
+   ========================================================================== */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font:var(--fs-3)/1.55 var(--sans);
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+h1,h2,h3{margin:0}
+p{margin:0 0 var(--s3)}
+a{color:var(--accent)}
+b,strong{font-weight:600}
+ul,ol{margin:var(--s2) 0 0;padding-left:18px}
+li{margin:2px 0}
+.shell{width:100%;max-width:var(--shell);margin:0 auto;padding:0 var(--s5)}
+
+/* ==========================================================================
+   页头：品牌区 + 能力摘要条
+   ========================================================================== */
+.masthead{background:var(--surface);border-bottom:1px solid var(--line);padding:var(--s5) 0 var(--s4)}
+.masthead .shell{display:flex;gap:var(--s5);align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.brand{min-width:0;flex:1 1 380px}
+.brand h1{font-size:var(--fs-5);letter-spacing:.2px;line-height:1.3}
+.brand .sub{margin:var(--s2) 0 0;max-width:70ch;color:var(--ink-2);font-size:var(--fs-2)}
+.brand .sub b{color:var(--ink)}
+.capbar{display:flex;flex-wrap:wrap;gap:var(--s2);list-style:none;margin:0;padding:0;flex:0 1 auto}
+.capbar li{
+  display:flex;flex-direction:column;justify-content:center;gap:2px;
+  min-width:104px;padding:var(--s2) var(--s3);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r2);
+}
+.capbar .cap-n{font-size:var(--fs-5);font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
+.capbar .cap-k{font-size:var(--fs-1);color:var(--ink-3);white-space:nowrap}
+.capbar li.cap-zero .cap-n{color:var(--good)}
+
+/* ==========================================================================
+   标签栏（sticky）
+   ========================================================================== */
+nav.tabs{
+  position:sticky;top:0;z-index:30;
+  background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--shadow);
+}
+.tabs-inner{
+  display:flex;gap:var(--s1);max-width:var(--shell);margin:0 auto;padding:0 var(--s4);
+  overflow-x:auto;scrollbar-width:thin;
+}
+.tab{
+  flex:0 0 auto;border:0;background:none;cursor:pointer;
+  font:inherit;font-size:var(--fs-3);color:var(--ink-2);white-space:nowrap;
+  padding:var(--s3) var(--s3) calc(var(--s3) - 1px);
+  border-bottom:2px solid transparent;
+}
+.tab:hover{color:var(--ink);background:var(--surface-2)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.tab:focus-visible,button:focus-visible,details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ==========================================================================
+   布局
+   ========================================================================== */
+main{padding:var(--s5) 0 64px}
+.panel{display:none}
+.panel.active{display:block}
+.scan-top{display:grid;grid-template-columns:minmax(0,1fr)}
+.split{display:grid;grid-template-columns:minmax(280px,340px) minmax(0,1fr);gap:var(--s4);align-items:start}
+.split>*,.scan-top>*{min-width:0}
+.scroll-x{overflow:auto;max-width:100%}
+.stack>*+*{margin-top:var(--s4)}
+
+/* ==========================================================================
+   卡片 / 分区标题
+   ========================================================================== */
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r2);
+  padding:var(--s4);margin-bottom:var(--s4);min-width:0;box-shadow:var(--shadow);
+}
+.card-hd{
+  display:flex;align-items:baseline;gap:var(--s2);flex-wrap:wrap;
+  margin:-2px 0 var(--s3);padding-bottom:var(--s2);border-bottom:1px solid var(--line);
+}
+.card-hd h2{font-size:var(--fs-3);font-weight:600;color:var(--ink)}
+.sect{margin-top:var(--s4);min-width:0}
+.sect-hd,.sect>.note:first-child{
+  display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;
+  margin:0 0 var(--s3);padding-bottom:var(--s1);border-bottom:1px solid var(--line);
+  color:var(--ink-2);font-size:var(--fs-1);font-weight:600;letter-spacing:.04em;
+}
+.sect>.note:first-child b{font-weight:600}
+.lead{color:var(--ink-2);font-size:var(--fs-2);margin:0 0 var(--s3);max-width:88ch}
+.hint{color:var(--ink-3);font-weight:400;font-size:var(--fs-1)}
+
+/* ==========================================================================
+   按钮
+   ========================================================================== */
+.btn,button.primary,button.ghost,button.danger{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  font:inherit;font-size:var(--fs-2);line-height:1.2;
+  padding:var(--s2) var(--s4);border-radius:var(--r1);
+  border:1px solid transparent;cursor:pointer;
+  transition:background .12s,border-color .12s,color .12s;
+}
+.btn-primary,button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover:not(:disabled),button.primary:hover:not(:disabled){background:#2450b8;border-color:#2450b8}
+.btn-ghost,button.ghost{background:var(--surface);border-color:var(--line-2);color:var(--ink-2)}
+.btn-ghost:hover:not(:disabled),button.ghost:hover:not(:disabled){background:var(--surface-2);color:var(--ink)}
+.btn-danger,button.danger{background:var(--surface);border-color:var(--bad-line);color:var(--bad)}
+.btn-danger:hover:not(:disabled){background:var(--bad-soft)}
+.btn:disabled,button:disabled{opacity:.5;cursor:not-allowed}
+.btn-row{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s4)}
+.btn-row .note{font-size:var(--fs-2)}
+
+/* ==========================================================================
+   表单
+   ========================================================================== */
+.form-row-5{
+  display:grid;gap:var(--s3) var(--s4);align-items:end;justify-content:start;
+  grid-template-columns:minmax(0,260px) minmax(0,232px) minmax(0,112px) minmax(0,112px) minmax(0,auto);
+}
+.form-row-3{display:grid;gap:var(--s3) var(--s4);align-items:end;margin-top:var(--s4);
+  grid-template-columns:minmax(0,1.1fr) minmax(0,1.5fr) minmax(0,1.1fr)}
+.field{display:flex;flex-direction:column;gap:var(--s1);min-width:0}
+.field>label,.form-row-3 label,.pair-inline>label{color:var(--ink-3);font-size:var(--fs-1)}
+.field-wide{grid-column:1/-1}
+.topo{max-width:760px}
+input[type=text],input:not([type]),select,textarea,.input,.select{
+  font:inherit;font-size:var(--fs-2);color:var(--ink);background:var(--surface);
+  padding:7px 10px;border:1px solid var(--line-2);border-radius:var(--r1);
+  width:100%;min-width:0;
+}
+input[type=text]:focus,select:focus,textarea:focus,.input:focus{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);
+}
+select{cursor:pointer}
+input[type=checkbox]{width:auto;min-width:0;height:15px;margin:0;accent-color:var(--accent);cursor:pointer}
+.check{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);font-size:var(--fs-2);cursor:pointer;padding-bottom:7px}
+.paste{
+  width:100%;min-height:130px;resize:vertical;
+  font:var(--fs-1)/1.55 var(--mono);
+  background:var(--surface-2);border-style:dashed;padding:var(--s3);
+}
+.paste:focus{background:var(--surface)}
+.pair-inline{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+.pair-inline>label{flex:0 0 auto}
+.pair-inline select{width:auto;flex:0 1 180px}
+.arrow{color:var(--ink-3)}
+.fileinfo{margin-top:var(--s2)}
+#pairbox{margin-top:var(--s4)}
+.toolbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
+.toolbar .select{flex:0 0 auto;width:auto;min-width:120px}
+.toolbar .input{flex:1 1 170px;width:auto}
+
+/* 拖放区 */
+.drop{
+  border:1.5px dashed var(--line-2);border-radius:var(--r2);background:var(--surface-2);
+  padding:var(--s6) var(--s4);text-align:center;color:var(--ink-3);
+  cursor:pointer;transition:background .12s,border-color .12s,color .12s;
+}
+.drop:hover{border-color:var(--accent);color:var(--ink-2)}
+.drop.hot{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.drop-t{font-size:var(--fs-4);font-weight:600;color:var(--ink);margin-bottom:var(--s1)}
+.drop.hot .drop-t{color:var(--accent)}
+
+/* ==========================================================================
+   文本块：提示 / 错误 / 说明 / 空状态 / 骨架
+   ========================================================================== */
+.note{color:var(--ink-3);font-size:12.5px;line-height:1.6}
+.alert,.err{
+  border:1px solid var(--line-2);border-radius:var(--r2);
+  padding:10px var(--s3);font-size:var(--fs-2);background:var(--surface-2);color:var(--ink-2);
+  overflow-wrap:anywhere;
+}
+.alert-info{background:var(--accent-soft);border-color:#c3d5f7;color:#1b3f92}
+.alert-warn{background:var(--warn-soft);border-color:var(--warn-line);color:#74490c}
+.alert-err,.err{background:var(--bad-soft);border-color:var(--bad-line);color:#8a1f1f}
+#scan-err:not(:empty),#propose-err:not(:empty){margin-top:var(--s3)}
+.empty{
+  padding:var(--s5) var(--s4);text-align:center;color:var(--ink-3);font-size:var(--fs-2);
+  background:var(--surface-2);border:1px dashed var(--line-2);border-radius:var(--r2);
+}
+.empty b{display:block;color:var(--ink-2);font-size:var(--fs-3);font-weight:600;margin-bottom:var(--s1)}
+.skeleton{
+  height:12px;margin:var(--s2) 0;border-radius:var(--r1);
+  background:linear-gradient(90deg,var(--surface-2) 25%,#e7eaf0 37%,var(--surface-2) 63%);
+  background-size:400% 100%;animation:sk 1.4s ease infinite;
+}
+.skeleton.w60{width:60%}
+.skeleton.w80{width:80%}
+@keyframes sk{from{background-position:100% 50%}to{background-position:0 50%}}
+@media (prefers-reduced-motion:reduce){.skeleton{animation:none}}
+
+/* 语义色（数值 / 结论） */
+.good,.ok{color:var(--good)}
+.bad,.no{color:var(--bad)}
+.warn{color:var(--warn)}
+
+/* ==========================================================================
+   级别徽章（security / unknown / compatibility 三色统一）
+   ========================================================================== */
+.badge,.badge-security,.badge-unknown,.badge-compatibility{
+  display:inline-block;padding:1px 8px;border-radius:999px;
+  font-size:var(--fs-1);font-weight:600;line-height:1.6;vertical-align:1px;
+  border:1px solid transparent;color:var(--ink-2);background:var(--surface-2);
+}
+.badge.security,.badge-security{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+.badge.unknown,.badge-unknown{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.badge.compatibility,.badge-compatibility{background:var(--surface-2);border-color:var(--line-2);color:var(--ink-3)}
+
+/* ==========================================================================
+   发现卡 / 已证实与模型线索的分栏
+   ========================================================================== */
+.finding{
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--bad);
+  border-radius:var(--r2);padding:var(--s4);margin-bottom:var(--s3);min-width:0;
+  box-shadow:var(--shadow);
+}
+.finding h3{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  margin:0 0 var(--s3);font-size:var(--fs-3);font-weight:600;overflow-wrap:anywhere;
+}
+.finding.unknown{border-left-color:var(--warn)}
+.kv{margin:5px 0;font-size:var(--fs-2);line-height:1.6;overflow-wrap:anywhere}
+.kv .k{display:inline-block;min-width:76px;margin-right:var(--s1);color:var(--ink-3)}
+.kv.warn{color:var(--warn)}
+.boundary{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;font-weight:600;letter-spacing:.4px;
+  color:var(--good);background:var(--good-soft);border:1px solid var(--good-line);
+  border-radius:999px;padding:1px 10px;margin:var(--s1) 0 2px;
+}
+.boundary::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--good)}
+/* —— 未验证区：灰底 + 虚线边框 + "未经验证" 字样，与上面的确定性证据明显分栏 —— */
+.sect.clue-sect{
+  margin-top:var(--s5);padding:var(--s3) var(--s4);
+  background:var(--surface-2);border:1px dashed var(--line-2);border-radius:var(--r2);
+}
+.clue{
+  background:var(--surface-2);border:1px dashed var(--line-2);border-radius:var(--r2);
+  padding:var(--s3) var(--s4);color:var(--ink-2);font-size:12.5px;line-height:1.6;
+}
+.sect.clue-sect>.note:first-child{border-bottom-color:var(--line-2);color:var(--ink-2)}
+.sect.clue-sect>.note:first-child::after{
+  content:"未经验证";font-size:11px;font-weight:600;letter-spacing:.3px;
+  color:var(--warn);background:var(--warn-soft);border:1px solid var(--warn-line);
+  border-radius:999px;padding:0 8px;
+}
+.sect.clue-sect .clue{background:transparent;border:0;padding:0}
+
+/* 验证外部发现：三态徽章（由页尾装饰层按徽章文案着色） */
+.finding.vfy-confirmed{border-left-color:var(--bad)}
+.finding.vfy-refuted{border-left-color:var(--good)}
+.finding.vfy-unverifiable{border-left-color:var(--warn)}
+.badge.vfy-confirmed{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+.badge.vfy-refuted{background:var(--good-soft);border-color:var(--good-line);color:var(--good)}
+.badge.vfy-unverifiable{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+
+/* ==========================================================================
+   汇总带 / 指标卡 / 仪表带
+   ========================================================================== */
+.summary{
+  display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);align-items:baseline;
+  padding:var(--s3) var(--s4);margin-bottom:var(--s4);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r2);
+  box-shadow:var(--shadow);
+}
+.summary .k{color:var(--ink-3);font-size:var(--fs-1);margin-right:6px}
+.summary b{font-variant-numeric:tabular-nums}
+.statcards{display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fill,minmax(158px,1fr))}
+.statcards>.note,.statcards>.empty,.statcards>.skeleton{grid-column:1/-1}
+.statcard{
+  padding:10px var(--s3);background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r2);min-width:0;
+}
+.statcard .v{font-size:var(--fs-5);font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums}
+.statcard .k{color:var(--ink-3);font-size:var(--fs-1)}
+.meter{
+  display:flex;flex-wrap:wrap;align-items:stretch;
+  border:1px solid var(--line);border-radius:var(--r2);overflow:hidden;background:var(--surface);
+}
+.meter-cell{
+  display:flex;flex-direction:column;gap:1px;min-width:0;
+  padding:var(--s2) var(--s3);border-right:1px solid var(--line);
+}
+.meter-cell .k{color:var(--ink-3);font-size:var(--fs-1);white-space:nowrap}
+.meter-cell .v{font-size:var(--fs-4);font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.meter-stage{flex:1 1 220px;justify-content:center}
+.meter-stage .v{font-size:var(--fs-2)}
+.meter-nums{display:flex;flex-wrap:wrap;margin-left:auto}
+.meter-nums .meter-cell:last-child{border-right:0}
+.meter em{font-style:normal;font-size:var(--fs-1);color:var(--ink-3);margin-left:2px}
+.progress{height:8px;margin-top:var(--s3);background:var(--surface-2);border-radius:999px;overflow:hidden}
+.progress .bar{height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .2s ease}
+#scan-prog{margin-top:var(--s1)}
+
+/* ==========================================================================
+   表格
+   ========================================================================== */
+table,.table{border-collapse:collapse;width:100%;font-size:var(--fs-2);margin:var(--s2) 0;max-width:100%}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+th{background:var(--surface-2);color:var(--ink-2);font-size:var(--fs-1);font-weight:600;white-space:nowrap}
+tbody tr:hover{background:var(--accent-soft)}
+tr:last-child th,tr:last-child td{border-bottom:0}
+tr.diff{background:var(--bad-soft)}
+tr.diff td{color:#8a1f1f}
+tr.diff td:first-child::after{content:" ←";color:var(--bad)}
+tr.clickable{cursor:pointer}
+tr.prop-detail td{background:var(--surface-2)}
+
+/* 热力图（表格由后端口径渲染，这里只做边框 / 对齐 / 悬停） */
+.heat{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;margin:0;font-size:12.5px}
+.heat th,.heat td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px 10px;text-align:center;vertical-align:middle}
+.heat tr:first-child th{border-top:1px solid var(--line)}
+.heat tr th:first-child,.heat tr td:first-child{border-left:1px solid var(--line)}
+.heat th{background:var(--surface-2)}
+.heat td{font-variant-numeric:tabular-nums;cursor:default}
+.heat td:hover{box-shadow:inset 0 0 0 2px var(--accent)}
+.heat td.diag{background:var(--bg);color:var(--line-2)}
+
+/* ==========================================================================
+   列表：发现列表 / 案例列表 / 事件日志
+   ========================================================================== */
+.evlist,.caselist{
+  max-height:520px;overflow:auto;margin-top:var(--s2);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r2);
+}
+.evitem,.caseitem{
+  padding:10px var(--s3);border-bottom:1px solid var(--line);
+  border-left:3px solid transparent;cursor:pointer;
+}
+.evitem:last-child,.caseitem:last-child{border-bottom:0}
+.evitem:hover,.caseitem:hover{background:var(--accent-soft)}
+.evitem.sel,.caseitem.sel{background:var(--accent-soft);border-left-color:var(--accent)}
+.evitem .id,.caseitem .id{font-weight:600;font-size:var(--fs-2);overflow-wrap:anywhere}
+.evitem .meta,.caseitem .meta{color:var(--ink-3);font-size:var(--fs-1);overflow-wrap:anywhere}
+.log{
+  max-height:190px;overflow:auto;margin-top:var(--s2);padding:var(--s2) var(--s3);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r2);
+  font:var(--fs-1)/1.6 var(--mono);
+}
+.log .l{white-space:pre-wrap;word-break:break-all}
+.log .l.ok{color:var(--good)}
+.log .l.no{color:var(--bad)}
+.checkitem{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s2);
+  padding:var(--s2) 2px;border-bottom:1px solid var(--line);font-size:var(--fs-2);
+}
+.checkitem:last-child{border-bottom:0}
+
+/* ==========================================================================
+   代码块 / 折叠面板
+   ========================================================================== */
+pre{
+  margin:var(--s2) 0 0;padding:var(--s3);max-width:100%;overflow:auto;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r2);
+  font:var(--fs-1)/1.55 var(--mono);white-space:pre;
+}
+pre.code{background:#f8f9fb}
+code{font:var(--fs-1)/1.5 var(--mono);background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r1);padding:1px 5px}
+pre code{background:none;border:0;padding:0}
+details{
+  margin-top:var(--s3);padding:0 var(--s3);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r2);
+}
+details>summary{cursor:pointer;padding:var(--s2) 0;font-size:12.5px;color:var(--ink-2);list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸";display:inline-block;margin-right:6px;color:var(--ink-3)}
+details[open]>summary::before{content:"▾"}
+details pre{margin:0 0 var(--s3);background:var(--surface)}
+details.sect{margin-top:var(--s4);padding:0 var(--s4)}
+
+/* ==========================================================================
+   响应式：≥1280px 双栏；<900px 单栏堆叠
+   ========================================================================== */
+@media (min-width:1280px){
+  .scan-top{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s4);align-items:start}
+  .scan-top>.card{margin-bottom:0}
+  .split{grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:var(--s5)}
+}
+@media (max-width:1100px){
+  .form-row-5{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .form-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .shell{padding:0 var(--s4)}
+  .split,.form-row-3{grid-template-columns:minmax(0,1fr)}
+  .masthead .shell{gap:var(--s4)}
+  .meter-nums{margin-left:0}
+  .meter-cell{border-right:0}
+  .meter{flex-direction:column}
+  .meter-nums{width:100%;border-top:1px solid var(--line)}
+  .meter-nums .meter-cell{flex:1 1 40%;border-bottom:1px solid var(--line)}
+}
+@media (max-width:720px){
+  .form-row-5{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:560px){
+  .form-row-5,.form-row-3{grid-template-columns:minmax(0,1fr)}
+  .capbar li{flex:1 1 42%}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>CED — 产品耦合误差检测</h1>
-  <p class="sub">把同一份请求字节交给两个实现，看它们对「这条请求到哪里结束」的判断是否一致。
-     不一致且由攻击者可控的字节承载 → 就是耦合误差。</p>
+<header class="masthead">
+  <div class="shell">
+    <div class="brand">
+      <h1>CED — 产品耦合误差检测</h1>
+      <p class="sub">把同一份请求字节交给<b>两个实现</b>，看它们对「这条请求到哪里结束」的判断是否一致。
+         不一致、且由攻击者可控的字节承载 → 就是<b>产品耦合误差</b>。</p>
+    </div>
+    <ul class="capbar">
+      <li data-cap="domains"><span class="cap-n">—</span><span class="cap-k">已注册领域</span></li>
+      <li data-cap="impls"><span class="cap-n">—</span><span class="cap-k">参照实现</span></li>
+      <li data-cap="cases"><span class="cap-n">—</span><span class="cap-k">已知案例</span></li>
+      <li data-cap="deps" class="cap-zero"><span class="cap-n">0</span><span class="cap-k">第三方依赖</span></li>
+    </ul>
+  </div>
 </header>
 
 <nav class="tabs">
-  <button class="tab active" data-tab="scan">扫描</button>
-  <button class="tab" data-tab="verify">验证外部发现</button>
-  <button class="tab" data-tab="ledger">提案台账</button>
-  <button class="tab" data-tab="probe">探测文件</button>
-  <button class="tab" data-tab="cases">内置案例</button>
-  <button class="tab" data-tab="check">自检</button>
+  <div class="tabs-inner">
+    <button class="tab active" data-tab="scan">扫描</button>
+    <button class="tab" data-tab="verify">验证外部发现</button>
+    <button class="tab" data-tab="ledger">提案台账</button>
+    <button class="tab" data-tab="probe">探测文件</button>
+    <button class="tab" data-tab="cases">内置案例</button>
+    <button class="tab" data-tab="check">自检</button>
+  </div>
 </nav>
 
-<main>
+<main class="shell">
   <!-- ============ 扫描 ============ -->
   <section class="panel active" id="tab-scan">
     <div class="card">
-      <div class="row" style="margin-top:0">
-        <label>领域</label>
-        <select id="scan-domain" style="min-width:200px"></select>
-        <label>模式</label>
-        <select id="scan-mode">
-          <option value="axis">axis（单轴扫描）</option>
-          <option value="cross">cross（交叉扫描）</option>
-        </select>
-        <label>用例上限</label>
-        <input type="text" id="scan-limit" value="60" style="min-width:88px">
-        <label>随机种子</label>
-        <input type="text" id="scan-seed" value="42" style="min-width:88px">
-        <label style="display:inline-flex;align-items:center;gap:6px">
-          <input type="checkbox" id="scan-llm" style="min-width:0"> 使用模型提案
-        </label>
+      <div class="card-hd"><h2>扫描任务</h2>
+          <span class="hint">同一份字节做定向差分扫描，命中即产出可复现证据链</span></div>
+      <div class="form-row-5">
+        <div class="field"><label>领域</label><select id="scan-domain"></select></div>
+        <div class="field"><label>模式</label>
+          <select id="scan-mode">
+            <option value="axis">axis（单轴扫描）</option>
+            <option value="cross">cross（交叉扫描）</option>
+          </select></div>
+        <div class="field"><label>用例上限</label><input type="text" id="scan-limit" value="60"></div>
+        <div class="field"><label>随机种子</label><input type="text" id="scan-seed" value="42"></div>
+        <div class="field"><label class="check"><input type="checkbox" id="scan-llm"> <span>使用模型提案</span></label></div>
       </div>
-      <div class="row">
-        <label>拓扑文件（可选）</label>
-        <input type="text" id="scan-topology" placeholder="留空 = 用内置实现" style="min-width:280px">
+      <div class="form-row-3">
+        <div class="field field-wide topo"><label>拓扑文件（可选）</label>
+          <input type="text" id="scan-topology" placeholder="留空 = 用内置实现"></div>
       </div>
-      <div class="row">
-        <button class="primary" id="scan-go">开始扫描</button>
-        <button class="ghost" id="scan-abort" disabled>中止</button>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="scan-go">开始扫描</button>
+        <button class="btn btn-danger" id="scan-abort" disabled>中止</button>
         <span class="note" id="scan-hint">—</span>
       </div>
-      <div id="scan-err" style="margin-top:10px"></div>
+      <div id="scan-err"></div>
     </div>
 
-    <div class="card">
-      <div class="summary" style="margin-bottom:0;border:0;padding:0">
-        <span><span class="k">阶段</span><b id="scan-stage">—</b></span>
-        <span><span class="k">用例</span><b id="scan-cases">0</b></span>
-        <span><span class="k">分歧</span><b class="bad" id="scan-div">0</b></span>
-        <span><span class="k">安全级</span><b class="bad" id="scan-sec">0</b></span>
-        <span><span class="k">已用时</span><b id="scan-elapsed">0.0</b> 秒</span>
+    <div class="scan-top">
+      <div class="card">
+        <div class="card-hd"><h2>运行状态</h2></div>
+        <div class="meter">
+          <div class="meter-cell meter-stage"><span class="k">阶段</span><b class="v" id="scan-stage">—</b></div>
+          <div class="meter-nums">
+            <div class="meter-cell"><span class="k">用例</span><b class="v" id="scan-cases">0</b></div>
+            <div class="meter-cell"><span class="k">分歧</span><b class="v bad" id="scan-div">0</b></div>
+            <div class="meter-cell"><span class="k">安全级</span><b class="v bad" id="scan-sec">0</b></div>
+            <div class="meter-cell"><span class="k">已用时</span>
+              <span class="v"><b id="scan-elapsed">0.0</b><em>秒</em></span></div>
+          </div>
+        </div>
+        <div class="progress"><div class="bar" id="scan-bar"></div></div>
+        <div class="note" id="scan-prog">0 / 0 组用例</div>
+        <div class="sect">
+          <div class="note"><b>事件日志</b><span class="hint">最多保留 200 行</span></div>
+          <div class="log" id="scan-log"></div>
+        </div>
       </div>
-      <div class="progress"><div class="bar" id="scan-bar"></div></div>
-      <div class="note" id="scan-prog">0 / 0 组用例</div>
-      <div class="sect"><div class="note"><b>事件日志</b>（最多保留 200 行）</div>
-        <div class="log" id="scan-log"></div></div>
+
+      <div class="card">
+        <div class="card-hd"><h2>历史扫描任务</h2><span class="hint">(<span id="jobs-count">0</span>)</span></div>
+        <div id="scan-jobs">
+          <div class="skeleton w60"></div><div class="skeleton w80"></div><div class="skeleton w60"></div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
-      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
-        历史扫描任务（<span id="jobs-count">0</span>）</div>
-      <div id="scan-jobs"><div class="note">加载中…</div></div>
-    </div>
-
-    <div class="card">
+      <div class="card-hd"><h2>发现 triage</h2>
+        <span class="hint">左边选一条，右边看完整的证据链</span></div>
       <div class="split">
         <div>
-          <div class="row" style="margin-top:0">
-            <select id="scan-filter">
+          <div class="toolbar">
+            <select class="select" id="scan-filter">
               <option value="all">全部</option>
               <option value="security">仅安全级</option>
             </select>
-          </div>
-          <div class="row" style="margin-top:8px">
-            <input type="text" id="scan-search" placeholder="按 case_id / 实现 / kind 过滤"
-                   style="min-width:220px;width:100%">
+            <input class="input" type="text" id="scan-search" placeholder="按 case_id / 实现 / kind 过滤">
+            <label class="check"><input type="checkbox" id="scan-group" checked> <span>同类归并</span></label>
           </div>
           <div class="note" id="scan-count">0 条 / 共 0 条</div>
           <div class="evlist" id="scan-evlist"></div>
         </div>
-        <div id="scan-evidence" class="note">← 左边点一条发现</div>
+        <div>
+          <div id="scan-evidence" class="note">← 左边点一条发现</div>
+        </div>
       </div>
     </div>
 
     <div class="card">
-      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">扫描指标</div>
+      <div class="card-hd"><h2>扫描指标</h2><span class="hint">跑完一次扫描后由后端口径算出</span></div>
       <div class="statcards" id="scan-metrics">
-        <div class="note">跑完一次扫描后显示</div>
+        <div class="empty"><b>还没有指标</b>先在上方「扫描任务」里点「开始扫描」</div>
       </div>
     </div>
 
     <div class="card">
-      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">交叉矩阵热力图</div>
-      <div id="scan-heatmap" style="overflow:auto"><div class="note">跑完一次扫描后显示</div></div>
+      <div class="card-hd"><h2>交叉矩阵热力图</h2><span class="hint">格子越深，这对实现在同一份字节上的分歧越多</span></div>
+      <div class="scroll-x" id="scan-heatmap">
+        <div class="empty"><b>还没有热力图</b>先跑一次 cross 模式的扫描</div>
+      </div>
     </div>
   </section>
+
 
   <!-- ============ 提案台账 ============ -->
   <section class="panel" id="tab-ledger">
     <div class="card">
+      <div class="card-hd"><h2>模型提案</h2><span class="hint">提案必须通过差分 oracle 的准入实验才算命中</span></div>
       <div id="ledger-status" class="note">模型状态检查中…</div>
-      <div class="row">
-        <button class="primary" id="propose-go" disabled>让模型提一批新提案</button>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="propose-go" disabled>让模型提一批新提案</button>
         <span class="note" id="propose-hint">—</span>
       </div>
-      <div id="propose-err" style="margin-top:10px"></div>
+      <div id="propose-err"></div>
     </div>
 
     <div class="card">
+      <div class="card-hd"><h2>台账统计</h2></div>
       <div class="statcards" id="ledger-stats"></div>
       <div class="note">命中 = 提案通过了差分 oracle 的准入实验，不是模型自述</div>
     </div>
 
     <div class="card">
-      <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
-        最近提案（<span id="ledger-count">0</span>）</div>
-      <div id="ledger-table"><div class="note">加载中…</div></div>
+      <div class="card-hd"><h2>最近提案</h2><span class="hint">(<span id="ledger-count">0</span>) 点一行展开字节</span></div>
+      <div id="ledger-table">
+        <div class="skeleton w60"></div><div class="skeleton w80"></div><div class="skeleton w60"></div>
+      </div>
     </div>
   </section>
 
   <!-- ============ 探测文件 ============ -->
   <section class="panel" id="tab-probe">
     <div class="card">
+      <div class="card-hd"><h2>探测文件</h2><span class="hint">拿抓包导出的原始字节，看两侧理解是否一致</span></div>
       <div class="drop" id="drop">
-        <div style="font-size:15px;margin-bottom:6px"><b>把请求文件拖到这里</b></div>
+        <div class="drop-t">把请求文件拖到这里</div>
         <div>或点击选择文件 —— 必须是<b>原始字节</b>（抓包导出），
              用记事本另存过会改换行符</div>
         <input type="file" id="file" hidden>
       </div>
-      <div id="fileinfo" class="note"></div>
+      <div id="fileinfo" class="note fileinfo"></div>
 
-      <div class="row">
-        <label>领域</label>
-        <select id="probe-domain" style="min-width:200px"></select>
-        <label>比较方式</label>
-        <select id="mode">
-          <option value="all">全部组合（该领域的全部实现两两比对）</option>
-          <option value="pair">指定一对</option>
-        </select>
-        <span id="pairbox" style="display:none">
-          <select id="left"></select>
-          <span style="color:var(--dim)">↔</span>
-          <select id="right"></select>
-        </span>
-        <label style="margin-left:8px">拓扑文件（可选）</label>
-        <input type="text" id="topology" placeholder="留空 = 用内置实现" style="min-width:240px">
+      <div class="form-row-3">
+        <div class="field"><label>领域</label><select id="probe-domain"></select></div>
+        <div class="field"><label>比较方式</label>
+          <select id="mode">
+            <option value="all">全部组合（该领域的全部实现两两比对）</option>
+            <option value="pair">指定一对</option>
+          </select></div>
       </div>
 
-      <div class="row">
-        <button class="primary" id="go" disabled>开始探测</button>
+      <div class="field" id="pairbox" style="display:none">
+        <div class="pair-inline">
+          <label>指定一对实现</label>
+          <select id="left"></select>
+          <span class="arrow">↔</span>
+          <select id="right"></select>
+        </div>
+      </div>
+
+      <div class="form-row-3">
+        <div class="field field-wide"><label>拓扑文件（可选）</label>
+          <input type="text" id="topology" placeholder="留空 = 用内置实现"></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="go" disabled>开始探测</button>
         <span class="note" id="hint">先选一个文件</span>
       </div>
     </div>
@@ -271,12 +642,12 @@
   <!-- ============ 内置案例 ============ -->
   <section class="panel" id="tab-cases">
     <div class="card">
+      <div class="card-hd"><h2>已知案例库</h2><span class="hint">(<span id="casecount">0</span> 个)</span></div>
       <div class="split">
         <div>
-          <div style="margin-bottom:10px;color:var(--dim);font-size:13px">
-            已知案例库（<span id="casecount">0</span> 个）
+          <div class="caselist" id="caselist">
+            <div class="skeleton w80"></div><div class="skeleton w60"></div><div class="skeleton w80"></div>
           </div>
-          <div class="caselist" id="caselist"></div>
         </div>
         <div id="casedetail" class="note">← 点左边一个案例</div>
       </div>
@@ -286,33 +657,35 @@
   <!-- ============ 自检 ============ -->
   <section class="panel" id="tab-check">
     <div class="card">
-      <p style="margin-top:0;color:var(--dim)">
-        跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
-      <button class="primary" id="runchk">跑自检</button>
-      <div id="checkresult" style="margin-top:14px"></div>
+      <div class="card-hd"><h2>自检</h2><span class="hint">先证明程序能重新挖出已知的，再谈能发现未知的</span></div>
+      <p class="lead">跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="runchk">跑自检</button>
+      </div>
+      <div id="checkresult" class="stack"></div>
     </div>
   </section>
   <!-- ============ 验证外部发现 ============ -->
   <section class="panel" id="tab-verify">
     <div class="card">
-      <p style="margin-top:0;color:var(--dim)">
-        把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当作<strong>待验证的假设</strong>，
+      <div class="card-hd"><h2>验证外部发现</h2>
+        <span class="hint">确定性内核给结论，不看报告方的自述</span></div>
+      <p class="lead">把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当作<strong>待验证的假设</strong>，
         用与扫描<strong>完全相同</strong>的差分 + 消融链路去证实或证伪。
         <strong>结论由确定性内核给出，不看报告方的自述</strong> —— 这就是"做扫描器的裁判"。</p>
-      <textarea id="vfy-text" rows="8"
-        placeholder="粘贴一份清单：nuclei 的 JSONL、Burp 的 sitemap XML、HAR、curl 命令行，或每行一条 URL"
-        style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:12px/1.55 Consolas,Menlo,monospace;resize:vertical"></textarea>
-      <div class="row">
-        <label>格式</label>
-        <select id="vfy-fmt">
-          <option value="auto">自动识别</option>
-          <option value="nuclei">nuclei</option>
-          <option value="burp">Burp sitemap</option>
-          <option value="har">HAR</option>
-          <option value="curl">curl</option>
-          <option value="list">普通清单</option>
-        </select>
-        <button class="primary" id="vfy-go">开始验证</button>
+      <textarea class="paste" id="vfy-text" rows="8"
+        placeholder="粘贴一份清单：nuclei 的 JSONL、Burp 的 sitemap XML、HAR、curl 命令行，或每行一条 URL"></textarea>
+      <div class="btn-row">
+        <div class="field"><label>格式</label>
+          <select id="vfy-fmt">
+            <option value="auto">自动识别</option>
+            <option value="nuclei">nuclei</option>
+            <option value="burp">Burp sitemap</option>
+            <option value="har">HAR</option>
+            <option value="curl">curl</option>
+            <option value="list">普通清单</option>
+          </select></div>
+        <button class="btn btn-primary" id="vfy-go">开始验证</button>
         <span class="note" id="vfy-hint">每条假设都会在全部已注册领域上试一遍</span>
       </div>
     </div>
@@ -555,6 +928,7 @@ function cmpFinding(a, b){
 }
 
 let scanES = null, scanJobId = '', scanFindings = [], scanSel = null, scanPocs = {};
+let scanClusters = [], scanRedundancy = 1;   // 同类归并：同一对实现 + 同一分歧类型只留一条代表
 
 function scanErr(msg){
   const box = $('#scan-err');
@@ -684,6 +1058,8 @@ $('#scan-abort').onclick = async () => {
   }
 };
 
+$('#scan-group').onchange = () => renderScanEvList();
+
 async function loadScanJobs(){
   const box = $('#scan-jobs');
   box.innerHTML = '<div class="note">加载中…</div>';
@@ -728,6 +1104,8 @@ async function loadScanResult(jobId){
     scanFindings = (r.findings || []).slice().sort(cmpFinding);
     scanSel = null;
     scanPocs = {};
+    scanClusters = r.clusters || [];
+    scanRedundancy = r.redundancy || 1;
     (r.pocs || []).forEach(p => { scanPocs[p.case_id] = p; });
     renderScanEvList();
     renderScanEvidence(null);
@@ -819,21 +1197,46 @@ async function loadScanHeatmap(jobId){
   }
 }
 
+/* 同类归并：同一对实现 + 同一分歧类型 = 同一类事实，只留后端选出的那条代表。
+   键与后端 ced/report/cluster.py 完全一致（左, 右, kind），代表用 case_id 对齐。 */
+function clusterMap(){
+  const m = {};
+  scanClusters.forEach(c => { m[c.left + '\u0000' + c.right + '\u0000' + c.kind] = c; });
+  return m;
+}
+function clusterOf(f, map){
+  return map[f.left + '\u0000' + f.right + '\u0000' + f.kind];
+}
+function grouping(){
+  const box = $('#scan-group');
+  return !!(box && box.checked && scanClusters.length);
+}
+
 function filteredFindings(){
   const filt = $('#scan-filter').value;
   const q = $('#scan-search').value.trim().toLowerCase();
-  return scanFindings.filter(f => {
+  let items = scanFindings.filter(f => {
     if (filt === 'security' && f.level !== 'security') return false;
     if (!q) return true;
     const hay = [f.case_id, f.left, f.right, f.kind, f.axis]
       .map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
     return hay.indexOf(q) >= 0;
   });
+  if (grouping()){
+    const map = clusterMap();
+    items = items.filter(f => { const c = clusterOf(f, map); return !!c && c.case_id === f.case_id; });
+  }
+  return items;
 }
 
 function renderScanEvList(){
   const items = filteredFindings();
-  $('#scan-count').textContent = items.length + ' 条 / 共 ' + scanFindings.length + ' 条';
+  const map = clusterMap();
+  const on = grouping();
+  $('#scan-count').textContent = on
+    ? items.length + ' 类 / 共 ' + scanFindings.length + ' 条'
+      + '（同一类事实只列一条代表，冗余 ' + scanRedundancy + '×）'
+    : items.length + ' 条 / 共 ' + scanFindings.length + ' 条';
   const box = $('#scan-evlist');
   if (!items.length){
     box.innerHTML = '<div class="note" style="padding:12px">没有匹配的发现</div>';
@@ -842,9 +1245,13 @@ function renderScanEvList(){
   box.innerHTML = items.map(f => {
     const i = scanFindings.indexOf(f);
     const sel = scanSel && scanSel.case_id === f.case_id ? ' sel' : '';
+    const c = clusterOf(f, map);
+    const times = (c && c.count > 1)
+      ? ` <span class="badge" title="同一对实现 + 同一分歧类型共 ${c.count} 条，这里只列代表">×${c.count}</span>`
+      : '';
     return `<div class="evitem${sel}" data-i="${i}">
       <div class="id">${esc(f.case_id)}
-        <span class="badge ${esc(f.level)}">${esc(levelLabel(f.level))}</span></div>
+        <span class="badge ${esc(f.level)}">${esc(levelLabel(f.level))}</span>${times}</div>
       <div class="meta">${esc(f.axis)}　${esc(f.left)} ↔ ${esc(f.right)}</div>
       <div class="meta">${esc(f.kind)}${f.controllable ? '　<span class="bad">可控</span>' : ''}</div>
     </div>`;
@@ -875,6 +1282,13 @@ function renderScanEvidence(f){
     <div class="kv"><span class="k">可控</span>${f.controllable
       ? '<span class="bad">是（攻击者可直接发送）</span>' : '否'}</div>
     <div class="boundary">已证实 · 内核产出</div>`;
+
+  /* 同类归并说明 —— 这条代表着一整类事实，别让它看起来像孤例 */
+  const cls = clusterOf(f, clusterMap());
+  if (cls && cls.count > 1){
+    h += `<div class="note" style="margin-top:8px">同类归并：同一对实现 + 同一分歧类型共
+      <b>${cls.count}</b> 条，本条是代表（其余同类样本见报告 JSON / 结果库）</div>`;
+  }
 
   /* 双侧观测表 */
   h += `<div class="sect"><div class="note"><b>双侧观测</b></div>`;
@@ -948,7 +1362,7 @@ function renderScanEvidence(f){
 }
 
 /* ================= 验证外部发现 ================= */
-const VFY_LABEL = {confirmed:'已证实', refuted:'已证伪', unverifiable:'证不了'};
+const VFY_LABEL = {confirmed:'已证实', refuted:'未证实', unverifiable:'证不了'};
 
 $('#vfy-go').onclick = async () => {
   const out = $('#vfy-result');
@@ -975,7 +1389,7 @@ function renderVerify(d){
   let h = `<div class="summary">
     <span><span class="k">共</span><b>${d.items.length}</b> 条假设</span>
     <span><span class="k">已证实</span><b class="${c.confirmed ? 'bad' : 'good'}">${c.confirmed || 0}</b></span>
-    <span><span class="k">已证伪</span><b class="good">${c.refuted || 0}</b></span>
+    <span><span class="k">未证实</span><b class="good">${c.refuted || 0}</b></span>
     <span><span class="k">证不了</span><b class="warn">${c.unverifiable || 0}</b></span>
   </div>`;
   h += d.items.map(v => {
@@ -1114,6 +1528,72 @@ function onTabShown(name){
   else if (name === 'ledger'){ loadAssistStatus(); loadLedger(); }
 }
 onTabShown('scan');
+
+/* ===== 新增：控制台装饰层 =====
+   只读既有 DOM 与既有全局，不新增任何 fetch、不改任何既有函数。
+   1) 能力摘要条：数据取自页面已经请求过的 /api/domains、/api/impls、/api/cases
+      的结果（分别落在 #scan-domain 的选项、#left 的选项、#casecount 的文本上），
+      所以不需要再发一次请求，也就不会改变 fetch 调用点数量。
+   2) 验证外部发现的三态徽章按文案着色（已证实 / 未证实 / 证不了）。
+   3) 扫描证据里「模型线索（未验证）」那一节加 class，使未验证内容与确定性证据分栏。 */
+(function(){
+  /* ---- 1) 能力摘要条 ---- */
+  const bar = document.querySelector('.capbar');
+  const slot = k => bar && bar.querySelector('[data-cap="' + k + '"] .cap-n');
+  const setNum = (el, v) => {
+    if (el && el.textContent !== String(v)) el.textContent = String(v);
+  };
+  function syncCapbar(){
+    const dSel = $('#scan-domain'), iSel = $('#left'), cEl = $('#casecount');
+    const domains = dSel ? dSel.options.length : 0;
+    const impls = iSel ? iSel.options.length : 0;
+    const cases = cEl ? (parseInt(cEl.textContent, 10) || 0) : 0;
+    setNum(slot('domains'), domains || '—');
+    setNum(slot('impls'), impls || '—');
+    setNum(slot('cases'), cases);
+  }
+  if (bar){
+    const opts = {childList:true, subtree:true, characterData:true};
+    [$('#scan-domain'), $('#left'), $('#casecount')].forEach(el => {
+      if (el) new MutationObserver(syncCapbar).observe(el, opts);
+    });
+    syncCapbar();
+  }
+
+  /* ---- 2) 三态徽章着色 ---- */
+  const vfy = $('#vfy-result');
+  if (vfy && window.MutationObserver){
+    const tri = {};
+    tri[VFY_LABEL.confirmed] = 'vfy-confirmed';
+    tri[VFY_LABEL.refuted] = 'vfy-refuted';
+    tri[VFY_LABEL.unverifiable] = 'vfy-unverifiable';
+    const paint = () => {
+      vfy.querySelectorAll('.finding').forEach(f => {
+        const b = f.querySelector('.badge');
+        const cls = b && tri[b.textContent.trim()];
+        if (!cls) return;
+        if (!f.classList.contains(cls)) f.classList.add(cls);
+        if (!b.classList.contains(cls)) b.classList.add(cls);
+      });
+    };
+    new MutationObserver(paint).observe(vfy, {childList:true, subtree:true});
+    paint();
+  }
+
+  /* ---- 3) 「模型线索（未验证）」分栏 ---- */
+  const ev = $('#scan-evidence');
+  if (ev && window.MutationObserver){
+    const mark = () => {
+      ev.querySelectorAll('.sect').forEach(s => {
+        const unverified = !!s.querySelector('.clue');
+        if (unverified !== s.classList.contains('clue-sect'))
+          s.classList.toggle('clue-sect', unverified);
+      });
+    };
+    new MutationObserver(mark).observe(ev, {childList:true, subtree:true});
+    mark();
+  }
+})();
 </script>
 </body>
 </html>

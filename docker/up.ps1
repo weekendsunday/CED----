@@ -14,11 +14,13 @@
 #   · 首次构建 nginx/probe 镜像需要能拉取基础镜像（现场断网见 docker/README.md 的离线快照）
 #
 # 用法
-#   powershell -NoProfile -File docker/up.ps1                  # 第一档：probe + front
-#   powershell -NoProfile -File docker/up.ps1 -Gunicorn        # 第二档：加 gateway + backend
-#   powershell -NoProfile -File docker/up.ps1 -TimeoutSec 180
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1                  # 第一档：probe + front
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1 -Gunicorn        # 第二档：加 gateway + backend
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1 -TimeoutSec 180
 #
-# 注意：本机（开发机）没有安装 Docker，本脚本未实机运行过，仅做过语法解析检查。
+# 注意：本机已装 Docker Desktop（`F:\docker`），本脚本**已实机运行过**（2026-10-02）。
+#       跑法必须带 `-ExecutionPolicy Bypass`：默认 Restricted 策略会直接拒绝加载脚本
+#       （实测：`powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1` 报 running scripts is disabled）。
 # =============================================================================
 
 [CmdletBinding()]
@@ -146,4 +148,4 @@ Write-Host ""
 Write-Host "栈已就绪。下一步：" -ForegroundColor Green
 Write-Host "  python -m ced scan --topology ced/topologies/real-nginx-probe.yaml --limit 12 --out results/real.md"
 Write-Host "  （--limit 12 是必须的：前置不会半关闭，探针每条请求要等 5 秒，见 docker/README.md）"
-Write-Host "  收工：powershell -NoProfile -File docker/down.ps1"
+Write-Host "  收工：powershell -NoProfile -ExecutionPolicy Bypass -File docker/down.ps1"

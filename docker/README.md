@@ -1,7 +1,8 @@
 # docker/ —— 真实链路演示栈（nginx 前置 → 探针扮演后端）
 
-> **本机没有安装 Docker，所以这套 compose 栈尚未实机验证。**
-> 未验证项与「本机实际验证过什么」都写在下面两节里，请按未验证清单自行核对一遍再上场比赛。
+> **2026-10-02 更新**：本机已安装 Docker Desktop 4.93（`F:\docker`）并**实机跑通了这套栈**。
+> 下面的核验清单逐条跑过，结论、实测到的前置定帧行为、以及本轮暴露并修掉的三个缺陷，
+> 都记在「实机验证记录」一节里；仍剩三项未覆盖，也在那里列明。
 > 逐字保留的纪律：本文件里凡是标着「实测」的输出都是在**本开发机**上真实跑出来的；
 > 标着「期望」的都是按代码推断、**没有**跑过 Docker 部分。
 
@@ -60,13 +61,13 @@ flowchart LR
 docker compose version
 
 # 1) 起栈 —— 脚本会 up -d --build，然后轮询 http://127.0.0.1:8801/health 直到 ready
-powershell -NoProfile -File docker/up.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1
 
 # 2) 跑扫描（**必须带 --limit**，理由见「常见问题」）
 python -m ced scan --topology ced/topologies/real-nginx-probe.yaml --limit 12 --out results/real.md
 
 # 3) 收工
-powershell -NoProfile -File docker/down.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/down.ps1
 ```
 
 `docker/up.ps1` 干三件事：`docker compose up -d --build` → 轮询探针 `/health`（默认 90 秒超时，
@@ -112,9 +113,9 @@ HTTP/1.1 200 OK                              ← 这是 nginx 回给客户端的
 - `耦合误差 D` / `安全级 S` = 结构字段有分歧的条数 / 其中判为安全级（CWE-444 等）的条数
 - 每条安全级发现会生成一份端到端 PoC 脚本到 `--poc-dir`
 
-### 本机实测的输出（不是 Docker，用 TCP 直通中继顶替 nginx）
+### 无 Docker 时的实测输出（用 TCP 直通中继顶替 nginx）
 
-本开发机没有 Docker，但把「探针 + 前置 + chain runner + CLI」这条**管道**用
+在没有 Docker 的机器上，用 TCP 直通中继也能把「探针 + 前置 + chain runner + CLI」这条**管道**用
 一个逐字节转发的 TCP 中继（顶替 nginx 的位置，监听 8180 → 探针 8810，控制口 8811）
 跑通过。拓扑是照抄 `real-nginx-probe.yaml` 只换端口，命令与上面完全同形：
 
@@ -164,10 +165,9 @@ HELLO
 
 ---
 
-## 本机没有 Docker —— 未验证清单
+## 核验清单（原「本机没有 Docker —— 未验证清单」）
 
-> **下面这些东西本开发机一件都没跑过**，镜像、容器、端口、nginx 指令全部只做了静态核对。
-> 上场比赛前请在有 Docker 的机器上按顺序核一遍。
+> 下表是**装 Docker 之前**的状态；装好之后的逐条结论见紧随其后的「实机验证记录」。
 
 | # | 未验证项 | 具体是什么 | 怎么验 |
 |---|---|---|---|
@@ -178,7 +178,76 @@ HELLO
 | 5 | nginx 实际定帧行为 | 尤其「客户端同时给 CL 与 TE 时 nginx 是转发还是 400」「chunked 体是否被改成 CL」——**不同版本行为不同**，配置注释里明确标了「以现场实测为准」 | `docker compose logs front`（本配置把请求行与 CL/TE 打进日志）+ 探针 `GET /views` |
 | 6 | **真 gunicorn** 环境 | `docker/backend/app.py` 的重建/转发逻辑在本机用 `wsgiref`（标准库 WSGI 服务器）顶替 gunicorn 验证过（见下节），但**真 gunicorn** 下 environ 里 `CONTENT_LENGTH`/`HTTP_TRANSFER_ENCODING`/`wsgi.input_terminated` 到底长什么样、`--workers 1` 的日志形态，都没跑过 | `docker compose --profile gunicorn up -d` 后 `curl -v http://127.0.0.1:8090/`，应回 environ 的 JSON |
 | 7 | 脚本运行时行为 | 三个 `.ps1` 只做过 **PowerShell 语法解析**（`Parser::ParseFile`，0 错误）与 BOM 检查，没在 Docker 环境里执行过 | 直接跑 `up.ps1` / `down.ps1` / `snapshot.ps1` |
-| 8 | `--forwarded-allow-ips` | 用固定 IP `172.28.0.3` 是否被你这版 gunicorn 接受、XFF 是否真的生效，没实测 | 见下面「第二档」小节 |
+| 8 | `--forwarded-allow-ips` | 用固定 IP `172.28.0.3` 是否被 gunicorn 接受、XFF 是否真的生效 | ⚠️ 已实测且**原假设有误**：固定 IP 被接受，但这个开关**不改写 `REMOTE_ADDR`**（只控制 secure header）—— 见「实机验证记录」与下面「第二档」小节 |
+
+### 实机验证记录（2026-10-02，装有 Docker Desktop 4.93 的开发机）
+
+环境：Docker Desktop **4.93.0** / 引擎 **29.8.1** / compose **v5.5.1**，程序装在 `F:\docker\DockerDesktop`、
+镜像与容器数据根 `F:\docker\wsl`（实测落位：`disk\docker_data.vhdx` 1.57GB + `main\ext4.vhdx` 0.09GB），
+引擎镜像源 `docker.m.daocloud.io` + `docker.1ms.run`；WSL **3.0.1**。
+
+| # | 结论 | 实测要点 |
+|---|---|---|
+| 1 | ✅ | `docker compose config -q`（默认与 `--profile gunicorn`）都通过 |
+| 2 | ✅ | `front` 与 `gateway` 两份 nginx 配置 `nginx -t` 都是 `test is successful` |
+| 3 | ✅ | `docker compose --profile gunicorn build` 成功：`ced/probe:dev` 200MB、`ced/backend:dev` 199MB（容器内 `pip install gunicorn` 走 pypi 直连，通） |
+| 4 | ✅ | 8080→80 / 8081→8081 / 8090→8090 映射正常；`curl 127.0.0.1:8801/health` → `{"status":"ok"}`；`curl 127.0.0.1:8080/` 回的就是探针观测 JSON |
+| 5 | ⚠️ 实测到与预期不同的行为 | 见下「nginx 1.25.5 的定帧实测」 |
+| 6 | ✅（含一处更正） | 真 gunicorn **23.0.0** 跑通（8090 直连 0.01s 返回探针观测）；`--forwarded-allow-ips` 的作用被更正，见下 |
+| 7 | ⚠️ 需加一个参数 | 三个 `.ps1` 都能跑，但**必须 `-ExecutionPolicy Bypass`**：默认 Restricted 策略下 `-File` 直接被拒（`Get-ExecutionPolicy -List` 各作用域均为 Undefined = 客户端默认 Restricted） |
+| 8 | ❌ 文档原假设有误 | 同第 6 项：`--forwarded-allow-ips` 不改写 `REMOTE_ADDR` |
+
+#### nginx 1.25.5 的定帧实测（第 5 项，`docker compose logs front` + 探针 `/views`）
+
+| 用例 | 客户端看到 | 探针收到（= nginx 转发出去的） |
+|---|---|---|
+| 基线 `GET` | 200（5.0s） | `framing_source: none`，`raw_len=128`（nginx 重写过请求：加了 Host / Connection / X-CED-Observer） |
+| **`Content-Length` 与 `Transfer-Encoding` 并存** | **400，0.0s —— nginx 自己回绝** | **一个字节都没收到** |
+| 仅 `Transfer-Encoding: chunked` | 200（5.0s） | **`te: []`、`cl: 5`** —— chunked 体被解开、按 CL 重发 |
+| 仅 `Content-Length: 5` | 200（5.0s） | `cl: 5` |
+| `Content-Length: 05`（前导零） | 200（5.0s） | **`cl: 5`** —— 前导零被归一化 |
+
+结论：**CL+TE、chunked 体、CL 前导零这三类分歧在这台 nginx 之后根本观测不到** ——
+它们在上游侧就被抹平了（这正是「前置定帧行为决定你能观测到什么」的实证）。
+每条用例 5.0s = 探针的 `IDLE_TIMEOUT`：nginx 不半关闭，探针只能靠空闲超时判定输入结束。
+
+#### gunicorn 23.0.0 的 `--forwarded-allow-ips`（第 6/8 项）
+
+同一条请求（伪造 `X-Forwarded-For: 1.2.3.4` + `X-Forwarded-Proto: https`，对端 `172.28.0.1`）对照：
+
+| `--forwarded-allow-ips` | 对端是否受信 | `REMOTE_ADDR` | `wsgi.url_scheme` |
+|---|---|---|---|
+| `172.28.0.3`（本栈的设定） | 否 | `172.28.0.1`（真实对端） | `http` |
+| `172.28.0.1` | 是 | `172.28.0.1`（**仍是真实对端**） | `https` |
+
+**这个开关只管 secure header，不管 `REMOTE_ADDR`。** 原文里「用 `/environ` 的 REMOTE_ADDR
+前后对比就能看到差别」是错的；上面「第二档」小节已按实测更正。
+
+#### 本轮实测暴露并已修掉的三个缺陷
+
+1. **compose 固定 IP 冲突（必现）**：原先只给 `gateway`/`backend` 写了 `ipv4_address`，
+   而先启动的 `probe`/`front` 会被动态分到 `.2`/`.3` —— 之后 `gateway` 想按固定地址起在 `.3` 上直接
+   `failed to set up container networking: Address already in use`（`front` 必然早于 `gateway` 启动，故必现）。
+   改成**四个服务全部钉死**（probe .2 / gateway .3 / backend .4 / front .5）。
+   注意 `ipam.aux_addresses` **不是**解法：它的语义是「这个地址被别的东西占了」，写进去后
+   `backend` 自己申请 `.4` 也会撞（实测过）。
+2. **链路器吃不下真 nginx 的「客户端立即半关闭」**：链路器发完即 `SHUT_WR`（替身前置会把它透传给探针，
+   所以又快又对），但 nginx 1.25.5 遇到客户端立即半关闭时**既不转发也不回响应**
+   （实测：探针记到 `raw_len=0` 的空连接，客户端 0.0s 断开）→ 整轮链路扫描以「链路不可用」中止。
+   修法：先试半关闭（替身前置的快路径），失败自动换成普通客户端模式并**记住**
+   （真 nginx 只多花一次连接；不半关闭时每条用例约 5s）。回归测试见
+   `ced/tests/fixtures/nginx_like_front.py` + `test_chain_e2e.py`。
+3. **消融候选被拒会崩掉整轮扫描**：真前置会拒掉一部分消融候选（nginx 抹掉 `Content-Length` 后直接 400），
+   而 `ProbeRejected` 原先只在**主观测**处被捕获 → 消融阶段一抛异常，整轮扫描带 traceback 崩掉。
+   修法：抽共用的 `classify.upgradability.still_diverges`，候选被拒时**保守返回「分歧仍在」**
+   （即该候选不算承载者，宁愿少升级也不凭空造可控性证据）；最小化谓词同样处理。
+   回归测试见 `test_pipeline.py::TestAblationGuard`。
+
+#### 仍未覆盖的三项
+
+- **真实客户产品接入**（把 `runner: chain` 指向客户产品）—— 本机只有 nginx 这一种前置。
+- **`real-nginx-gunicorn.yaml` 的端到端扫描**（第二档拓扑跑完整差分）—— 各段单独验证过，组合扫描未跑。
+- **`snapshot.ps1 -Load` 的断网恢复**（现场断网场景）—— `snapshot.ps1` 的保存/校验方向未跑。
 
 ### 本机**实际**做过的验证（都在本开发机上执行过）
 
@@ -220,7 +289,7 @@ ref-lenient-cl local None None None
 ## 第二档：gunicorn 与 `--forwarded-allow-ips`
 
 ```powershell
-powershell -NoProfile -File docker/up.ps1 -Gunicorn      # = compose --profile gunicorn up -d --build
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1 -Gunicorn      # = compose --profile gunicorn up -d --build
 # 段2 入口在 8081（nginx gateway），它把请求转给 8090 的 gunicorn，
 # gunicorn 再把"它自己解析出来的请求"重建后转给 8800 的探针。
 python -m ced scan --topology ced/topologies/real-nginx-gunicorn.yaml --limit 12 --out results/real-gunicorn.md
@@ -237,14 +306,20 @@ python -m ced scan --topology ced/topologies/real-nginx-gunicorn.yaml --limit 12
 
 **`--forwarded-allow-ips`（这段是给部署的人看的，不是给攻击者看的）**
 
-gunicorn 只会采信来自**受信对端**的 `X-Forwarded-*`。默认受信集合是 `127.0.0.1`，
-而 nginx 是另一个容器 → **默认情况下 nginx 发的 `X-Forwarded-For` 会被 gunicorn 忽略**，
-`environ['REMOTE_ADDR']` 是 nginx 的容器地址而不是客户端地址。
+⚠️ **本机实测更正（gunicorn 23.0.0）**：这个开关**不改写 `REMOTE_ADDR`**，它只决定 gunicorn 是否采信受信对端发来的 **secure header**（`X-Forwarded-Proto` → `wsgi.url_scheme`）。
+实测对照（同一条请求：伪造 `X-Forwarded-For: 1.2.3.4` + `X-Forwarded-Proto: https`，对端 `172.28.0.1`）：
+
+| `--forwarded-allow-ips` | 对端是否受信 | `REMOTE_ADDR` | `wsgi.url_scheme` |
+|---|---|---|---|
+| `172.28.0.3`（本栈的设定） | 否 | `172.28.0.1`（真实对端） | `http` |
+| `172.28.0.1` | 是 | `172.28.0.1`（**仍是真实对端**） | `https` |
+
+即：**`REMOTE_ADDR` 永远是 socket 对端**，无论有没有 XFF、对端受不受信；想拿客户端地址只能自己解 `environ['HTTP_X_FORWARDED_FOR']`，并且必须处理「最左边那一段是攻击者自己填的」。
 
 - 本栈的做法：把 nginx(gateway) 的容器 IP **固定**成 `172.28.0.3`（compose 里的
   `ipam` + `ipv4_address`），然后 `CED_FORWARDED_ALLOW_IPS=172.28.0.3`。
-  验证方式：`curl http://127.0.0.1:8090/` 看回的 `environ.REMOTE_ADDR`
-  （带上/不带 `X-Forwarded-For: 1.2.3.4` 各来一次）。
+  验证方式：带 `X-Forwarded-Proto: https` 请求 `http://127.0.0.1:8090/`，
+  看回的 `environ['wsgi.url_scheme']` 是 `http` 还是 `https`（受信与否的差别只在这里，不在 `REMOTE_ADDR`）。
 - **不要写 `*`**：那等于采信任何客户端伪造的 `X-Forwarded-For`，
   日志里的"攻击者地址"就变成攻击者自己填的字符串了。
 - 若你的 gunicorn 版本不认 CIDR/不符合此处写法，就退回到**具体 IP 列表**（逗号分隔）；
@@ -263,15 +338,15 @@ compose 正常起栈要联网：拉 `nginx:1.25-alpine`、pip 装 gunicorn。现
 docker compose --profile gunicorn build
 
 # 保存：docker save 到 docker/images/*.tar + 生成 manifest.txt（镜像:tag、文件名、sha256）
-powershell -NoProfile -File docker/snapshot.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1
 
 # 校验（拷到 U 盘前后各跑一次，确认没拷坏）
-powershell -NoProfile -File docker/snapshot.ps1 -Verify
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -Verify
 ```
 
 ```powershell
 # 现场（断网机器）：先恢复镜像，再用 --no-build 起栈
-powershell -NoProfile -File docker/snapshot.ps1 -Load
+powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -Load
 docker compose --profile gunicorn up -d --no-build
 python -m ced scan --topology ced/topologies/real-nginx-gunicorn.yaml --limit 12 --out results/real-gunicorn.md
 ```

@@ -14,21 +14,23 @@
 #   -Load：按 manifest 从 tar 恢复 —— 先校验 sha256，对得上才 docker load。
 #
 # 现场用法（断网机器）
-#   powershell -NoProfile -File docker/snapshot.ps1 -Load
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -Load
 #   docker compose up -d --no-build            # 注意 --no-build：别再触发联网构建
-#   powershell -NoProfile -File docker/up.ps1  # 或直接用 up.ps1（它会 --build，但镜像已存在不会联网）
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1  # 或直接用 up.ps1（它会 --build，但镜像已存在不会联网）
 #
 # 前置条件
 #   · 保存/校验/恢复都需要 docker CLI（daemon 要在跑）；只有 -Verify 的哈希校验需要 daemon
 #   · manifest.txt 与 tar 必须成对拷到现场（U 盘/内网盘）
 #
 # 用法
-#   powershell -NoProfile -File docker/snapshot.ps1                    # 保存
-#   powershell -NoProfile -File docker/snapshot.ps1 -Verify            # 校验
-#   powershell -NoProfile -File docker/snapshot.ps1 -Load              # 恢复
-#   powershell -NoProfile -File docker/snapshot.ps1 -OutDir D:\ced-images
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1                    # 保存
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -Verify            # 校验
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -Load              # 恢复
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/snapshot.ps1 -OutDir D:\ced-images
 #
-# 注意：本机（开发机）没有安装 Docker，本脚本未实机运行过，仅做过语法解析检查。
+# 注意：本机已装 Docker Desktop（`F:\docker`），本脚本**已实机运行过**（2026-10-02）。
+#       跑法必须带 `-ExecutionPolicy Bypass`：默认 Restricted 策略会直接拒绝加载脚本
+#       （实测：`powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1` 报 running scripts is disabled）。
 # =============================================================================
 
 [CmdletBinding()]

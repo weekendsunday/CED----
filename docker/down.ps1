@@ -14,9 +14,11 @@
 #   · 当前目录无所谓：脚本自己切到 docker/ 目录再执行 compose
 #
 # 用法
-#   powershell -NoProfile -File docker/down.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File docker/down.ps1
 #
-# 注意：本机（开发机）没有安装 Docker，本脚本未实机运行过，仅做过语法解析检查。
+# 注意：本机已装 Docker Desktop（`F:\docker`），本脚本**已实机运行过**（2026-10-02）。
+#       跑法必须带 `-ExecutionPolicy Bypass`：默认 Restricted 策略会直接拒绝加载脚本
+#       （实测：`powershell -NoProfile -ExecutionPolicy Bypass -File docker/up.ps1` 报 running scripts is disabled）。
 # =============================================================================
 
 [CmdletBinding()]

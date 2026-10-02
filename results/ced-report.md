@@ -16,6 +16,35 @@
 |---|---|
 | framing_boundary | 24 |
 
+## 攻击场景升级（端到端 PoC）
+
+> 只对 `security` 级发现升级。`unknown` / `compatibility` 一律不升级。
+
+| 用例 | 场景 | 链路 | 转发/消费/夹带（字节） | 脚本 |
+|---|---|---|---|---|
+| `8b2611d2` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 39 / 0 / **39** | `results/pocs/poc_8b2611d2.py` |
+| `d1df52a0` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 39 / 0 / **39** | `results/pocs/poc_d1df52a0.py` |
+| `44f044fe` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 44 / 0 / **44** | `results/pocs/poc_44f044fe.py` |
+| `3d0a4b5b` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 39 / 0 / **39** | `results/pocs/poc_3d0a4b5b.py` |
+| `4d4c1c3b` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 0 / 0 / **0** | `results/pocs/poc_4d4c1c3b.py` |
+| `de0a72c9` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 0 / 0 / **0** | `results/pocs/poc_de0a72c9.py` |
+| `1cfdd820` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-lenient-cl | 39 / 0 / **39** | `results/pocs/poc_1cfdd820.py` |
+| `41d4a9a7` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-headers | 0 / 0 / **0** | `results/pocs/poc_41d4a9a7.py` |
+| `ff9e2e44` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-headers | 0 / 0 / **0** | `results/pocs/poc_ff9e2e44.py` |
+| `2eedc234` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-headers | 0 / 0 / **0** | `results/pocs/poc_2eedc234.py` |
+| `823440d4` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-headers | 0 / 0 / **0** | `results/pocs/poc_823440d4.py` |
+| `62ba123b` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_62ba123b.py` |
+| `70162be0` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_70162be0.py` |
+| `b8f75cf9` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_b8f75cf9.py` |
+| `276c3a0e` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_276c3a0e.py` |
+| `fc4c74fb` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_fc4c74fb.py` |
+| `63b954dd` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_63b954dd.py` |
+| `c8f519aa` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_c8f519aa.py` |
+| `c6b4341c` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_c6b4341c.py` |
+| `2204c027` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_2204c027.py` |
+| `f2b69e5e` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_f2b69e5e.py` |
+| `7e6ac820` | 请求走私（HTTP/1.1 消息边界分歧） | ref-cl-first → ref-loose-request-line | 0 / 0 / **0** | `results/pocs/poc_7e6ac820.py` |
+
 ## 误差明细（按级别排序）
 
 ### [security] `8b2611d2` — framing_boundary
@@ -43,6 +72,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 39 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **39 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **39** 字节，后端消费 0 字节，被夹带 **39** 字节
+- 可执行 PoC：`results/pocs/poc_8b2611d2.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `d1df52a0` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-lenient-cl**（轴：`cl_value`）
@@ -67,6 +112,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 39 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **39 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **39** 字节，后端消费 0 字节，被夹带 **39** 字节
+- 可执行 PoC：`results/pocs/poc_d1df52a0.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `44f044fe` — framing_boundary
 
@@ -93,6 +154,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 44 字节，后端只消费 0 字节 → **44 字节被夹带**，将成为下一条请求的开头
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 44 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **44 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 44 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **44** 字节，后端消费 0 字节，被夹带 **44** 字节
+- 可执行 PoC：`results/pocs/poc_44f044fe.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `3d0a4b5b` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-lenient-cl**（轴：`cl_value`）
@@ -117,6 +194,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 39 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **39 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **39** 字节，后端消费 0 字节，被夹带 **39** 字节
+- 可执行 PoC：`results/pocs/poc_3d0a4b5b.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `4d4c1c3b` — framing_boundary
 
@@ -145,6 +238,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_4d4c1c3b.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `de0a72c9` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-lenient-cl**（轴：`cl_value`）
@@ -172,6 +281,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_de0a72c9.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `1cfdd820` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-lenient-cl**（轴：`cl_value`）
@@ -195,6 +320,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-lenient-cl** 串联：前置转发 39 字节，后端只消费 0 字节 → **39 字节被夹带**，将成为下一条请求的开头
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-lenient-cl（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 39 字节，全部转发给 ref-lenient-cl
+4. ref-lenient-cl 按自身策略只消费 0 字节 → 剩余 **39 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 39 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **39** 字节，后端消费 0 字节，被夹带 **39** 字节
+- 可执行 PoC：`results/pocs/poc_1cfdd820.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `41d4a9a7` — framing_boundary
 
@@ -221,6 +362,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-headers（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-headers
+4. ref-loose-headers 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_41d4a9a7.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `ff9e2e44` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-headers**（轴：`header_syntax`）
@@ -245,6 +402,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-headers（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-headers
+4. ref-loose-headers 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_ff9e2e44.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `2eedc234` — framing_boundary
 
@@ -271,6 +444,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-headers（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-headers
+4. ref-loose-headers 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_2eedc234.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `823440d4` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-headers**（轴：`header_syntax`）
@@ -295,6 +484,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-headers** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-headers（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-headers
+4. ref-loose-headers 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_823440d4.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `62ba123b` — framing_boundary
 
@@ -322,6 +527,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_62ba123b.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `70162be0` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -348,6 +569,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_70162be0.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `b8f75cf9` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -372,6 +609,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_b8f75cf9.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `276c3a0e` — framing_boundary
 
@@ -398,6 +651,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_276c3a0e.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `fc4c74fb` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -423,6 +692,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_fc4c74fb.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `63b954dd` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -447,6 +732,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_63b954dd.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `c8f519aa` — framing_boundary
 
@@ -475,6 +776,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_c8f519aa.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `c6b4341c` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -500,6 +817,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_c6b4341c.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [security] `2204c027` — framing_boundary
 
@@ -527,6 +860,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_2204c027.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `f2b69e5e` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -553,6 +902,22 @@
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
 
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_f2b69e5e.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
+
 ### [security] `7e6ac820` — framing_boundary
 
 - 对照：**ref-cl-first** ↔ **ref-loose-request-line**（轴：`request_line`）
@@ -578,6 +943,22 @@
   ```
 
 - 链式复现：若 **ref-cl-first → ref-loose-request-line** 串联：前置未转发任何字节（按自身策略拒绝）→ 不产生夹带；但『一侧拒绝、一侧接受』本身构成绕过/可用性面
+
+**攻击场景**：请求走私（HTTP/1.1 消息边界分歧）（`desync`，CWE CWE-444）
+
+前置与后端对『这条请求到哪里结束』判断不同：前置转发的字节里，后端只消费了一部分，剩下的成为后端眼中**下一条请求**的开头。于是攻击者可以在前置完全看不见的情况下，向后端注入一条自选请求 —— 前置的鉴权、限流、审计对这条被夹带的请求全部失效。
+
+复现步骤：
+
+1. 确认链路方向：客户端 → ref-cl-first（前置） → ref-loose-request-line（后端）
+2. 把下面的最小复现样本原样发给 ref-cl-first：它包含一处非规范的定帧写法
+3. ref-cl-first 按自身策略认为该请求占用 0 字节，全部转发给 ref-loose-request-line
+4. ref-loose-request-line 按自身策略只消费 0 字节 → 剩余 **0 字节**留在后端缓冲区
+5. 紧随其后的下一条请求会被拼接在那 0 字节之后，被夹带的字节成为后端眼中另一条请求的开头
+6. 修复：对 CL 与 TE 并存、非规范 CL、冲突 CL、TE 终编码非 chunked 的请求一律 400 拒绝；上游必须在转发前完成定帧并重写为规范形式
+
+- 字节归属：前置转发 **0** 字节，后端消费 0 字节，被夹带 **0** 字节
+- 可执行 PoC：`results/pocs/poc_7e6ac820.py`（离线算账；加 `--send HOST:PORT --i-am-authorized` 可真发）
 
 ### [unknown] `c5cb884a` — framing_boundary
 

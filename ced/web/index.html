@@ -80,33 +80,12 @@ li{margin:2px 0}
 .capbar .cap-k{font-size:var(--fs-1);color:var(--ink-3);white-space:nowrap}
 .capbar li.cap-zero .cap-n{color:var(--good)}
 
-/* ==========================================================================
-   标签栏（sticky）
-   ========================================================================== */
-nav.tabs{
-  position:sticky;top:0;z-index:30;
-  background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--shadow);
-}
-.tabs-inner{
-  display:flex;gap:var(--s1);max-width:var(--shell);margin:0 auto;padding:0 var(--s4);
-  overflow-x:auto;scrollbar-width:thin;
-}
-.tab{
-  flex:0 0 auto;border:0;background:none;cursor:pointer;
-  font:inherit;font-size:var(--fs-3);color:var(--ink-2);white-space:nowrap;
-  padding:var(--s3) var(--s3) calc(var(--s3) - 1px);
-  border-bottom:2px solid transparent;
-}
-.tab:hover{color:var(--ink);background:var(--surface-2)}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-.tab:focus-visible,button:focus-visible,details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+button:focus-visible,details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 
 /* ==========================================================================
    布局
    ========================================================================== */
 main{padding:var(--s5) 0 64px}
-.panel{display:none}
-.panel.active{display:block}
 .scan-top{display:grid;grid-template-columns:minmax(0,1fr)}
 .split{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:var(--s5);align-items:start}
 .split>*,.scan-top>*{min-width:0}
@@ -500,6 +479,10 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
   background:var(--surface-2);border-radius:0 0 13px 13px}
 .sheet-ft .note{margin-right:auto}
 #cap-summary{flex:1 1 260px}
+/* 设置小窗：比捕获设置宽，正文可滚（字段多 + 台账折叠） */
+dialog.sheet-wide{width:min(1000px,94vw)}
+.sheet-scroll{max-height:min(74vh,880px);overflow:auto}
+.card-hd .hd-right{margin-left:auto}
 .levels .lv.bad{border-color:var(--bad-line);background:var(--bad-soft);color:var(--bad)}
 .levels .lv.warn{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn)}
 .levels .lv.good{border-color:var(--good-line);background:var(--good-soft);color:var(--good)}
@@ -522,20 +505,13 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
   </div>
 </header>
 
-<nav class="tabs">
-  <div class="tabs-inner">
-    <button class="tab active" data-tab="detect">检测</button>
-    <button class="tab" data-tab="settings">设置</button>
-    <button class="tab" data-tab="check">自检</button>
-  </div>
-</nav>
-
 <main class="shell">
   <!-- ============ 扫描 ============ -->
   <!-- ============ 检测：唯一入口 ============ -->
-  <section class="panel active" id="tab-detect">
+  <section id="tab-detect">
     <div class="card">
-      <div class="card-hd"><h2>检测</h2><span class="hint">把东西粘/拖进来就行 —— 它自己判断这是什么、自动选路、跑完整链路。<b>输入是字节或清单，不是源码/程序</b></span></div>
+      <div class="card-hd"><h2>检测</h2><span class="hint">把东西粘/拖进来就行 —— 它自己判断这是什么、自动选路、跑完整链路。<b>输入是字节或清单，不是源码/程序</b></span>
+        <button class="btn btn-ghost hd-right" id="set-open" title="模型 API、捕获默认值、扫描默认值、输出路径">设置…</button></div>
       <textarea class="paste" id="dt-text" rows="7" placeholder="粘这里，哪种都行：
 ① 一条 HTTP 请求的原始字节（抓包导出 —— 用记事本另存会改换行符，别那么干）
 ② nuclei JSON / JSONL、Burp XML、HAR、curl 命令行、URL 清单
@@ -794,10 +770,12 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
 
   </section>
 
-  <!-- ============ 设置 ============ -->
-  <section class="panel" id="tab-settings">
-    <div class="card">
-      <div class="card-hd"><h2>设置</h2><span class="hint">所有可配置项都在这一页；保存即生效（模型配置在服务启动时也会自动加载）</span></div>
+  <!-- ============ 设置：小窗（原生 dialog，控件沿用原 id，读写逻辑不动） ============ -->
+  <dialog class="sheet sheet-wide" id="set-dlg">
+    <div class="sheet-hd"><h3>设置</h3>
+      <span class="hint">所有可配置项都在这里；保存即生效（模型配置在服务启动时也会自动加载）</span>
+      <button class="x" id="set-dlg-x" title="关闭（Esc）">✕</button></div>
+    <div class="sheet-bd sheet-scroll">
       <div class="settings-grid">
         <fieldset class="set"><legend>模型 API 接入（可选，不配也能跑）</legend>
           <label>端点 base_url<input class="input" id="set-llm-base" placeholder="http://127.0.0.1:8000/v1（OpenAI 兼容）"></label>
@@ -833,7 +811,6 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
         <span class="note" id="set-state">配置文件：—</span>
       </div>
       <div id="set-err"></div>
-    </div>
 
     <details class="fold"><summary>模型提案台账（模型只提案、内核只裁决）</summary>
   <section class="legacy" id="tab-ledger">
@@ -861,11 +838,16 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
     </div>
   </section>
     </details>
-  </section>
+    </div>
+    <div class="sheet-ft">
+      <span class="note" id="set-dlg-msg">改完点「保存设置」；API Key 留空 = 不改动已保存的</span>
+      <button class="btn btn-ghost" id="set-dlg-close">关闭</button>
+    </div>
+  </dialog>
 
-  <!-- ============ 自检与参考 ============ -->
-  <section class="panel" id="tab-check">
-  <section class="legacy" id="tab-check">
+  <!-- ============ 自检与参考：并入检测页（不再是独立标签页） ============ -->
+  <section id="tab-check">
+  <section class="legacy">
     <div class="card">
       <div class="card-hd"><h2>自检</h2><span class="hint">先证明程序能重新挖出已知的，再谈能发现未知的</span></div>
       <p class="lead">跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
@@ -923,14 +905,6 @@ dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let fileB64 = '', fileName = '';
-
-/* ---------- 标签页 ---------- */
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
-  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
-  document.querySelectorAll('.panel').forEach(p =>
-    p.classList.toggle('active', p.id === 'tab-' + t.dataset.tab));
-  onTabShown(t.dataset.tab);
-});
 
 /* ---------- 选文件 ---------- */
 function toB64(buf){
@@ -1006,7 +980,7 @@ $('#go').onclick = async () => {
     });
     renderProbe(await res.json());
   } catch (err) {
-    out.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    out.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
   $('#go').disabled = false;
 };
@@ -1091,7 +1065,7 @@ async function loadCase(id){
   try {
     d = await (await fetch('/api/case?id=' + encodeURIComponent(id))).json();
   } catch (err) {
-    return box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    return box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
   if (d.error) return box.innerHTML = '<div class="err">' + esc(d.error) + '</div>';
   const c = d.case, r = d.result;
@@ -1109,6 +1083,35 @@ async function loadCase(id){
     ${r.diverged ? renderFinding(r) : '<div class="note">两侧理解一致</div>'}`;
 }
 
+/* ---------- 失败原因要讲清楚 ---------- */
+/* 三类失败处置完全不同，混成一句「请求失败」会让人以为是程序算错：
+     ① 连不上（服务停了 / 浏览器或系统代理还指着已停止的自动捕获端口）
+     ② HTTP 4xx/5xx（服务端拒绝了，响应体里有原因）
+     ③ 返回不是 JSON（老版本服务端异常时回一页 HTML —— 现在服务端也回 JSON 了）
+   服务端配套：ced/web/server.py 的 _fail()。 */
+function fetchFailReason(err){
+  const s = String(err);
+  if (/Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|ERR_PROXY|ERR_EMPTY|ERR_NAME/.test(s))
+    return '连不上本机服务 —— 请求根本没到服务端。检查启动它的那个窗口还在不在；'
+         + '若浏览器 / 系统代理曾被指向「自动捕获」的端口（默认 18081），停止捕获后要改回去，'
+         + '否则本页所有请求都会失败。原始错误：' + s;
+  return s;
+}
+function fetchFailText(err){ return '请求失败：' + fetchFailReason(err); }
+function fetchFailHint(err){ return esc('请求失败：' + fetchFailReason(err)); }
+/** 统一走这里取 JSON：HTTP 状态与响应体都带进错误信息，别再只报「请求失败」。 */
+async function apiJson(url, opts){
+  const resp = await fetch(url, opts);
+  const text = await resp.text();
+  if (!resp.ok){
+    let detail = text.slice(0, 400);
+    try { const j = JSON.parse(text); detail = j.error || j.detail || detail; } catch (e) {}
+    throw new Error('HTTP ' + resp.status + '：' + detail);
+  }
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error('返回不是 JSON（HTTP ' + resp.status + '）：' + text.slice(0, 200)); }
+}
+
 /* ---------- 自检 ---------- */
 $('#runchk').onclick = async () => {
   const box = $('#checkresult');
@@ -1116,9 +1119,10 @@ $('#runchk').onclick = async () => {
   $('#runchk').disabled = true;
   let d;
   try {
-    d = await (await fetch('/api/regression', {method:'POST'})).json();
+    d = await apiJson('/api/regression', {method:'POST'});
+    if (d.error) throw new Error(d.error);
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
     $('#runchk').disabled = false;
     return;
   }
@@ -1263,7 +1267,7 @@ $('#scan-go').onclick = async () => {
     scanLog('已启动任务 ' + d.job_id);
     subscribeScan(d.job_id);
   } catch (err) {
-    scanErr('请求失败：' + err);
+    scanErr(fetchFailText(err));
     $('#scan-go').disabled = false;
   }
 };
@@ -1312,7 +1316,7 @@ async function loadScanJobs(){
       loadScanResult(tr.dataset.id);
     });
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
 }
 
@@ -1337,7 +1341,7 @@ async function loadScanResult(jobId){
     loadScanMetrics(jobId);
     loadScanHeatmap(jobId);
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
 }
 
@@ -1372,7 +1376,7 @@ async function loadScanMetrics(jobId){
       metricCard('最小化压缩比', metricPct(m.minimize_ratio), 'Σ最小化后字节数 / Σ原始字节数（只算被最小化的发现）—— 越低代表性越好') +
       metricCard('单用例平均耗时', avg, '已用时 / 用例数 —— 扫描吞吐；没有用例时不显示');
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
 }
 
@@ -1418,7 +1422,7 @@ async function loadScanHeatmap(jobId){
     if (d.error){ box.innerHTML = '<div class="err">' + esc(d.error) + '</div>'; return; }
     box.innerHTML = renderHeatmap(d);
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
 }
 
@@ -1602,7 +1606,7 @@ $('#vfy-go').onclick = async () => {
     });
     renderVerify(await res.json());
   } catch (err) {
-    out.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    out.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
   $('#vfy-go').disabled = false;
 };
@@ -1713,7 +1717,7 @@ async function loadLedger(){
       if (det) det.style.display = det.style.display === 'none' ? '' : 'none';
     });
   } catch (err) {
-    box.innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    box.innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
 }
 
@@ -1741,18 +1745,26 @@ $('#propose-go').onclick = async () => {
       await loadLedger();
     }
   } catch (err) {
-    $('#propose-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    $('#propose-err').innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
   }
   btn.textContent = label;
   btn.disabled = !assistAvailable;
 };
 
-/* ================= 标签页钩子 ================= */
-function onTabShown(name){
-  if (name === 'scan') loadScanJobs();
-  else if (name === 'ledger'){ loadAssistStatus(); loadLedger(); }
+/* ================= 单页钩子 ================= */
+/* ---------- 单页结构：标签页已去掉 ----------
+   扫描任务列表照旧开页就加载；台账改成「设置…」小窗打开时才拉（原来靠切标签页触发）。 */
+loadScanJobs();
+/* 「设置…」小窗：原生 dialog，控件沿用原 id，既有读写逻辑一行没动 */
+function openSettings(){
+  const dlg = $('#set-dlg');
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');
+  loadAssistStatus(); loadLedger();
 }
-onTabShown('scan');
+$('#set-open').onclick = openSettings;
+$('#set-dlg-x').onclick = () => $('#set-dlg').close();
+$('#set-dlg-close').onclick = () => $('#set-dlg').close();
 
 /* ===== 新增：控制台装饰层 =====
    只读既有 DOM 与既有全局，不新增任何 fetch、不改任何既有函数。
@@ -1996,7 +2008,7 @@ onTabShown('scan');
       es = new EventSource('/api/detect/events?job_id=' + encodeURIComponent(info.job_id));
       es.onmessage = m => { try { handle(JSON.parse(m.data)); } catch (e) { /* 半条消息忽略 */ } };
     } catch (err){
-      el('dt-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+      el('dt-err').innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>';
     }
   }
   el('dt-go').onclick = go;
@@ -2340,7 +2352,7 @@ onTabShown('scan');
       ev.innerHTML = evHtml(d);
       const btn = box('cap-poc');
       if (btn) btn.onclick = () => poc(caseId);
-    } catch(err){ ev.className = 'note'; ev.textContent = '请求失败：' + err; }
+    } catch(err){ ev.className = 'note'; ev.textContent = fetchFailText(err); }
   }
   async function poc(caseId){
     const out = box('cap-poc-out'); const body = box('cap-poc-body');
@@ -2355,7 +2367,7 @@ onTabShown('scan');
         <div class="kv"><span class="k">影响</span>${esc(d.impact)}</div>
         <div class="kv"><span class="k">样本</span>${d.sample_len} 字节</div>
         <div class="kv"><span class="k">复现步骤</span>${d.steps.map(esc).join('　→　')}</div></div>`;
-    } catch(err){ out.textContent = '请求失败：' + err; }
+    } catch(err){ out.textContent = fetchFailText(err); }
   }
   function stopPolling(){ if (timer){ clearInterval(timer); timer = null; } }
   function startPolling(){ stopPolling(); timer = setInterval(poll, 1000); }
@@ -2399,7 +2411,7 @@ onTabShown('scan');
       box('cap-go').disabled = true; box('cap-stop').disabled = false;
       renderStats(d.summary);
       startPolling();
-    } catch(err){ box('cap-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>'; }
+    } catch(err){ box('cap-err').innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>'; }
   }
   async function stop(){
     try {
@@ -2409,7 +2421,7 @@ onTabShown('scan');
       box('cap-go').disabled = false; box('cap-stop').disabled = true;
       stopPolling();
       renderStats(d.summary);
-    } catch(err){ box('cap-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>'; }
+    } catch(err){ box('cap-err').innerHTML = '<div class="err">' + fetchFailHint(err) + '</div>'; }
   }
   box('cap-go').onclick = go;
   box('cap-stop').onclick = stop;

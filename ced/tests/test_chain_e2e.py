@@ -9,6 +9,8 @@
   * 前置收下不转发  → **跳过并计数**（不合成观测、也不中止；真实前置拒绝畸形请求属正常）
   * 吃不下半关闭的前置 → 链路器**自动降级成普通客户端模式**（真 nginx 就是这样：本机实测
                         客户端立即半关闭时它既不转发也不回响应），且只多花一次连接
+  * 静默丢弃某些请求的前置 → **跳过并计数**（真 gunicorn 对裸 LF / 大写块长就是这样），
+                        而"上游真的不通"仍然**中止** —— 两者靠活性复探区分
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from ced.probe import Evaluator
 ADAPTER = Http1FramingAdapter()
 FRONT = Path(__file__).resolve().parent / "fixtures" / "standin_front.py"
 NGINX_LIKE_FRONT = Path(__file__).resolve().parent / "fixtures" / "nginx_like_front.py"
+SILENT_DROP_FRONT = Path(__file__).resolve().parent / "fixtures" / "silent_drop_front.py"
 DEVNULL = subprocess.DEVNULL
 
 
@@ -86,10 +89,16 @@ class TestChainE2E(unittest.TestCase):
 
     # ---------------------------------------------------------------- 工具
 
-    def _start_front(self, mode: str) -> int:
+    def _start_front(self, mode: str, upstream: int | None = None) -> int:
+        """起替身前置；``upstream`` 缺省指向本测试的探针数据口。
+
+        传一个没人监听的端口 = 复现"前置活着但上游不通"，用来验证
+        「链路真故障必须仍然中止」这条底线不被活性复探削弱。
+        """
         port = _free_port()
         proc = subprocess.Popen(
-            [sys.executable, str(FRONT), mode, str(port), str(self.probe_data)],
+            [sys.executable, str(FRONT), mode, str(port),
+             str(self.probe_data if upstream is None else upstream)],
             cwd=str(ROOT), stdout=DEVNULL, stderr=DEVNULL)
         self.addCleanup(_stop, proc)
         _wait_port(port)
@@ -185,6 +194,40 @@ class TestChainE2E(unittest.TestCase):
         self.assertLess(conns, 2 * result.total_cases,
                         f"每个用例都重试了一遍（模式没被记住）：{conns} 次连接 / "
                         f"{result.total_cases} 个用例")
+
+    def test_silently_dropping_front_is_skipped_not_aborted(self):
+        """前置**静默丢掉**某几条请求（真 gunicorn 对裸 LF / 大写块长就是这样：
+        不转发、不回响应、直接关连接）→ 必须跳过并计数，而不是判成链路故障中止。
+
+        判据是链路活性：链路器再拿一条最小正常请求走一遍，探针还能记到视角
+        = 链路活着 = 这条请求只是"该前置不接受"。
+        """
+        port = _free_port()
+        proc = subprocess.Popen(
+            [sys.executable, str(SILENT_DROP_FRONT), str(port), str(self.probe_data)],
+            cwd=str(ROOT), stdout=DEVNULL, stderr=DEVNULL)
+        self.addCleanup(_stop, proc)
+        _wait_port(port)
+
+        evaluator = self._evaluator(port)
+        result = scan(ADAPTER, evaluator, mode="cross", limit=24, do_minimize=False)
+
+        # 这个前置只对"裸 LF"那几条静默丢弃，其余透明 → 不该有分歧
+        self.assertEqual(len(result.divergences), 0,
+                         f"其余请求应当被正常转发：{result.divergences[:2]}")
+        self.assertGreater(result.rejected_cases, 0,
+                           "静默丢弃的那几条必须被跳过并计数，不许静默、也不许中止")
+
+    def test_front_with_dead_upstream_still_aborts(self):
+        """前置活着但上游不通 → **必须仍然中止**（活性复探不得把它降级成"跳过"）。
+
+        这是最要紧的底线：一旦把"前置转不过去"也当成"这条请求不接受"，
+        一轮扫不出任何东西的报告就会看起来正常 —— 那正是本项目最想避免的假阴性。
+        """
+        evaluator = self._evaluator(self._start_front("pass", upstream=_free_port()))
+        with self.assertRaises(ProbeUnreachable) as ctx:
+            scan(ADAPTER, evaluator, mode="cross", limit=6, do_minimize=False)
+        self.assertIn("没有把任何字节转发", str(ctx.exception))
 
     def test_probe_control_api_unreachable_raises(self):
         """前置活着但探针控制口不可达 → 报错必须指明是探针的问题。"""

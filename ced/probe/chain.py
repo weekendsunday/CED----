@@ -27,6 +27,12 @@ VIEW_WAIT = 3.0         # 等探针记录视角的超时（前置没回响应时
 #: 转发型前置必须先拿到后端响应才能回复客户端，所以视角必然先于响应出现。
 REJECT_GRACE = 1.0
 
+#: 活性复探用的最小请求。只在"某条用例既没被转发、也没回响应"时发一次，
+#: 用来判断链路到底还活着没有。Host 特意写成可识别的值，方便在前置日志里
+#: 认出"这是引擎在探链路，不是某条用例"。
+LIVENESS_PAYLOAD = (b"GET / HTTP/1.1\r\nHost: ced-liveness-check\r\n"
+                    b"Connection: close\r\n\r\n")
+
 
 def _parse_addr(addr: str) -> tuple[str, int]:
     host, _, port = addr.rpartition(":")
@@ -128,6 +134,28 @@ class ChainEvaluator:
             time.sleep(0.02)
         return None
 
+    def _link_alive(self) -> bool:
+        """链路还活着吗：拿一条最小正常请求走一遍，探针能记到视角就是活着。
+
+        只在"某条用例既没被转发、也没回响应"时才调用 —— 用来把两种完全不同的情况分开：
+
+          * 前置**静默丢掉**了这一条。真实 gunicorn 就是这样：对裸 LF 分行、大写块长
+            （``0A``）这类它不认的写法，既不转发、也不回响应，直接关连接（本机实测）。
+            这是**前置的正常行为**，只该跳过这一条并计数。
+          * 链路真的坏了：连最小正常请求都转不过去（或上游不通）。
+
+        把两者混为一谈的代价是两头都错：判成故障 → 整轮扫描被一条畸形请求打断
+        （对真实产品不可用）；判成拒绝 → 把"链路故障"降级成"全被拒绝"，
+        于是一轮扫不出任何东西却看起来正常。所以这里多花一次请求去问清楚。
+        """
+        try:
+            self.reset()
+            response = _send_raw(self.front, LIVENESS_PAYLOAD,
+                                 half_close=self._half_close)
+        except OSError:
+            return False
+        return self._await_view(LIVENESS_PAYLOAD, response) is not None
+
     def __call__(self, impl_id: str, payload: bytes) -> Observation:
         try:
             self.reset()
@@ -170,6 +198,12 @@ class ChainEvaluator:
                 f"前置 {self.label} 收到 {len(payload)} 字节，"
                 f"但未向后端转发任何字节（回了 {len(last_response)} 字节响应）"
                 f"—— 按自身策略拒绝了这条请求，本条不可观测")
+        # 既没转发、也没回响应 —— 必须再问一次才知道是"被静默丢掉"还是"链路坏了"
+        if self._link_alive():
+            raise ProbeRejected(
+                f"前置 {self.label} 收到 {len(payload)} 字节后**静默丢弃**了它"
+                f"（不转发、也不回响应），但用一条最小正常请求复探时链路是通的"
+                f"—— 按「该前置不接受这条请求」处置，本条不可观测")
         raise ProbeUnreachable(
             f"前置 {self.label} 没有把任何字节转发到探针，也没有回响应"
             f"（被拒绝，或链路没起来）—— 拒绝合成视角，避免把探测失败当成耦合误差")

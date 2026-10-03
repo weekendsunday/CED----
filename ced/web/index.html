@@ -663,10 +663,10 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
     <details class="fold"><summary>探测文件（拖一份原始字节，自己指定对比哪一对实现）</summary>
   <section class="legacy" id="tab-probe">
     <div class="card">
-      <div class="card-hd"><h2>探测文件</h2><span class="hint">拿抓包导出的原始字节，看两侧理解是否一致</span></div>
+      <div class="card-hd"><h2>探测文件</h2><span class="hint">拿抓包导出的原始字节，看两侧理解是否一致 —— <b>不是源码、不是程序、不是压缩包</b>；工具全程黑盒，只读字节流</span></div>
       <div class="drop" id="drop">
-        <div class="drop-t">把请求文件拖到这里</div>
-        <div>或点击选择文件 —— 必须是<b>原始字节</b>（抓包导出），
+        <div class="drop-t">把<b>抓包导出的一条请求</b>拖到这里</div>
+        <div>或点击选择文件 —— 必须是<b>原始字节</b>（抓包导出 .bin/.txt），
              用记事本另存过会改换行符</div>
         <input type="file" id="file" hidden>
       </div>

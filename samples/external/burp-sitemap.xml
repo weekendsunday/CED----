@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<items burpVersion="2024.1">
+  <item><url><![CDATA[https://example.com/admin]]></url><status>200</status></item>
+  <item><url><![CDATA[https://example.com/a/../b]]></url><status>200</status></item>
+</items>

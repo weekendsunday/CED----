@@ -25,6 +25,7 @@ from functools import lru_cache
 from ..adapters import get as get_adapter
 from ..adapters import names as domain_names
 from ..classify.upgradability import judge
+from ..contracts import Finding
 from ..differ.comparator import compare
 from ..pipeline import case_id_of, plan_jobs
 from ..probe import Evaluator
@@ -77,6 +78,8 @@ class Analysis:
     raw_len: int
     domains: dict[str, dict] = field(default_factory=dict)
     top: Hit | None = None
+    #: 最强那条的 Finding —— 只给"一键出 PoC"用，不进 JSON（里面有大对象）
+    top_finding: object = None
 
     @property
     def divergences(self) -> int:
@@ -106,6 +109,7 @@ def analyze(raw: bytes, domains: list[str] | None = None) -> Analysis:
     case_id = case_id_of(raw)
     out = Analysis(case_id=case_id, raw_len=len(raw))
     best: Hit | None = None
+    best_finding = None
     best_rank = 99
 
     for name in (domains or domain_names()):
@@ -140,11 +144,14 @@ def analyze(raw: bytes, domains: list[str] | None = None) -> Analysis:
                            scenario=verdict.scenario or "",
                            ablation=verdict.ablation or "",
                            effect=verdict.effect or "", fix=verdict.fix or "")
+                best_finding = Finding(divergence=div, verdict=verdict,
+                                       original_len=len(payload))
 
         out.domains[name] = {"pairs": len(jobs), "divergences": divergences,
                              "security": security, "kinds": kinds}
 
     out.top = best
+    out.top_finding = best_finding
     return out
 
 

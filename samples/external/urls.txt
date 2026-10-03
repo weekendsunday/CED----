@@ -1,0 +1,3 @@
+https://example.com/admin
+https://example.com/a/../b
+https://example.com/s?a=1&a=2

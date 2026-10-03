@@ -1,0 +1,18 @@
+[
+  {
+    "template-id": "exposed-config",
+    "info": {
+      "name": "Exposed config"
+    },
+    "matched-at": "https://example.com/config.yml",
+    "host": "example.com"
+  },
+  {
+    "template-id": "git-exposure",
+    "info": {
+      "name": "Git exposure"
+    },
+    "matched-at": "https://example.com/.git/HEAD",
+    "host": "example.com"
+  }
+]

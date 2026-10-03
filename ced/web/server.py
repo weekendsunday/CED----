@@ -16,17 +16,21 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import posixpath
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import regression, store
+from .. import detect as detect_entry
+from .. import settings as app_settings
 from ..adapters import ADAPTERS
 from ..adapters import get as get_adapter
 from ..analysis import all_pairs, analyze, analyze_pairs
+from ..capture.web import CaptureRunner
 from ..contracts import ImplSpec
 from ..impls import reference
 from ..metrics import matrix_heatmap, scan_metrics
@@ -47,6 +51,26 @@ SSE_WAIT = 20.0
 
 #: 任务表在进程内存里 —— 服务重启后历史仍在库里，但结果对象不再可读（前端标 live=false）
 REGISTRY = JobRegistry()
+
+#: 自动捕获：进程内只有一个代理在跑（网页上的「开始 / 停止」就是它）
+CAPTURE = CaptureRunner()
+
+#: 可测试样本目录（网页「载入示例」用；只读、不许穿越）
+SAMPLE_DIR = Path(__file__).resolve().parents[2] / "samples"
+
+
+def _samples_list() -> list[dict]:
+    if not SAMPLE_DIR.is_dir():
+        return []
+    items = []
+    for path in sorted(SAMPLE_DIR.rglob("*")):
+        if path.is_file() and path.name != "README.md":
+            items.append({"name": str(path.relative_to(SAMPLE_DIR)).replace("\\", "/"),
+                          "size": path.stat().st_size})
+    return items
+
+#: 检测任务的事件流。单独一张表 —— 别把"检测"混进「历史扫描任务」列表里
+DETECT_REGISTRY = JobRegistry()
 
 
 def _spec_for(impl_id: str, domain: str = "http1-framing") -> ImplSpec:
@@ -213,7 +237,43 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(_assist_status())
         if url.path == "/api/assist/ledger":
             return self._json(_ledger_view())
+        if url.path == "/api/capture/state":
+            return self._json(CAPTURE.state())
+        if url.path == "/api/capture/records":
+            try:
+                since = int((query.get("since") or ["0"])[0])
+            except ValueError:
+                since = 0
+            return self._json(CAPTURE.records(since))
+        if url.path == "/api/capture/record":
+            return self._json(CAPTURE.record((query.get("case_id") or [""])[0]))
+        if url.path == "/api/detect/stages":
+            return self._json({"stages": list(detect_entry.STAGES)})
+        if url.path == "/api/detect/events":
+            return self._sse((query.get("job_id") or [""])[0], DETECT_REGISTRY)
+        if url.path == "/api/settings":
+            return self._json(app_settings.public_view())
+        if url.path == "/api/samples":
+            return self._json({"samples": _samples_list()})
+        if url.path.startswith("/samples/"):
+            return self._sample(url.path)
         return self._json({"error": "not found"}, 404)
+
+    def _sample(self, path: str) -> None:
+        """把 samples/ 下的样本**按字节**发给前端。
+
+        为什么单独一条静态路由：原始请求必须字节保真（前端靠它填进"exact"缓冲，
+        而不是走会被规范化的文本框）。只允许该目录内部，不许路径穿越。
+        """
+        base = SAMPLE_DIR.resolve()
+        name = posixpath.normpath(unquote(path[len("/samples/"):]))
+        try:
+            target = (base / name).resolve()
+        except OSError:
+            return self._json({"error": "非法路径"}, 400)
+        if not str(target).startswith(str(base)) or not target.is_file():
+            return self._json({"error": "没有这个样本"}, 404)
+        self._send(target.read_bytes(), "application/octet-stream")
 
     # ----------------------------------------------------------------- POST
     def do_POST(self):                                  # noqa: N802
@@ -235,7 +295,78 @@ class Handler(BaseHTTPRequestHandler):
             return self._assist_propose(body)
         if url.path == "/api/verify":
             return self._verify(body)
+        if url.path == "/api/capture/start":
+            return self._capture_start(body)
+        if url.path == "/api/capture/stop":
+            return self._json(CAPTURE.stop())
+        if url.path == "/api/capture/poc":
+            result = CAPTURE.poc(str(body.get("case_id") or ""))
+            return self._json(result, 200 if result.get("ok") else 400)
+        if url.path == "/api/detect":
+            return self._detect_start(body)
+        if url.path == "/api/settings":
+            return self._settings_save(body)
         return self._json({"error": "not found"}, 404)
+
+    def _detect_start(self, body: dict) -> None:
+        """单一入口：把输入交给 detect，前端随后用 SSE 看 DAG 与实时报告。
+
+        识别不出来的输入**当场**报人事话（400），不留到事件流里再报。
+        """
+        text = body.get("text") or ""
+        if not isinstance(text, str) or not text.strip():
+            return self._json({"error": "输入是空的 —— 粘一条 HTTP 请求，"
+                                        "或一份 nuclei / Burp / HAR / curl / URL 清单"}, 400)
+        domains = body.get("domains") or None
+        if isinstance(domains, str):
+            domains = [item.strip() for item in domains.split(",") if item.strip()]
+        unknown = [item for item in (domains or []) if item not in ADAPTERS]
+        if unknown:
+            return self._json({"error": f"未知领域：{', '.join(unknown)}"}, 400)
+        try:
+            kind, why, _ = detect_entry.identify(text)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+
+        job = DETECT_REGISTRY.create(domain="detect", mode="detect", limit=1)
+        job.emit({"type": "queued", "kind": kind, "why": why})
+
+        def worker() -> None:
+            try:
+                result = detect_entry.run(text, domains=domains, emit=job.emit)
+                job.emit({"type": "done", "result": result,
+                          "summary": result.get("summary", {})})
+                job.finish(DONE)
+            except Exception as exc:      # noqa: BLE001 —— 失败要写给前端，不许静默
+                job.emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+                job.finish(FAILED, error=str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return self._json({"job_id": job.job_id, "kind": kind, "why": why})
+
+    def _settings_save(self, body: dict) -> None:
+        try:
+            saved = app_settings.save(body or {})
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        return self._json({"ok": True, "settings": app_settings.public_view(saved)})
+
+    def _capture_start(self, body: dict) -> None:
+        """起自动捕获。端口被占 / 领域写错都要**当场**说清楚，不留给后台线程。"""
+        try:
+            port = int(body.get("port") or 18081)
+        except (TypeError, ValueError):
+            return self._json({"error": "端口必须是数字"}, 400)
+        domains = body.get("domains") or None
+        if isinstance(domains, str):
+            domains = [item.strip() for item in domains.split(",") if item.strip()]
+        unknown = [item for item in (domains or []) if item not in ADAPTERS]
+        if unknown:
+            return self._json({"error": f"未知领域：{', '.join(unknown)}"}, 400)
+        result = CAPTURE.start(port=port, domains=domains,
+                               analyze_all=bool(body.get("analyze_all")),
+                               jsonl=(body.get("jsonl") or None))
+        return self._json(result, 200 if result.get("ok") else 400)
 
     # ----------------------------------------------------------------- 业务
     def _evaluator(self, topology_path: str, domain: str = "http1-framing"):
@@ -436,13 +567,13 @@ class Handler(BaseHTTPRequestHandler):
                 {"error": f"任务 {job_id} 还没有产出结果（状态 {job.state}）"}, 409)
         return self._json(matrix_heatmap(job.result, job.result.impl_ids))
 
-    def _sse(self, job_id: str) -> None:
+    def _sse(self, job_id: str, registry: JobRegistry = REGISTRY) -> None:
         """手写事件流：一条连接到底，事件自己序列化。
 
         用 ``Connection: close`` + 不给 Content-Length 来表达"消息以连接关闭结束"，
         这样不必自己实现 chunked 编码。
         """
-        job = REGISTRY.get(job_id)
+        job = registry.get(job_id)
         if job is None:
             return self._json({"error": f"没有这个任务：{job_id}"}, 404)
 
@@ -557,6 +688,8 @@ def serve(port: int = DEFAULT_PORT, host: str = "127.0.0.1",
 
     actual = httpd.server_address[1]
     url = f"http://{host}:{actual}/"
+    # 把上次保存的设置（尤其模型 API 接入）在启动时生效 —— 复用 CED_LLM_* 读取路径
+    app_settings.apply_llm_env()
     print(f"CED 网页界面已启动：{url}", flush=True)
     print("在这个窗口按 Ctrl+C 停止。", flush=True)
 

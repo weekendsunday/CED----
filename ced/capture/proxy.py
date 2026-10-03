@@ -25,6 +25,7 @@ import queue
 import socket
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ MAX_HEAD = 64 << 10
 UPSTREAM_TIMEOUT = 30.0
 #: 分析队列容量：满了就只转发不分析（绝不因为分析而阻塞转发）
 QUEUE_SIZE = 512
+#: 内存里给网页/CLI 保留多少条记录（完整记录在 JSONL 里，一条不丢）
+MAX_RECORDS = 2000
 
 #: 默认跳过的静态资源后缀 —— 一个页面里绝大多数请求都是这些，全跑只是噪声
 STATIC_SUFFIXES = (
@@ -259,16 +262,20 @@ class CaptureProxy:
         self.seq = 0
         self.lock = threading.Lock()
         self.seen: dict[str, dict] = {}          # case_id → 记录（用于去重计数）
-        self.records: list[dict] = []            # 按到达顺序保留（供前端 / 总结用）
+        #: case_id → 当前出现次数（只记重复过的那些）—— 网页靠它把 ×N 刷新到已有行上
+        self.duplicate_counts: dict[str, int] = {}
+        self.records: deque = deque(maxlen=MAX_RECORDS)   # 供前端 / 总结用（限长防爆内存）
         self.queue: queue.Queue = queue.Queue(maxsize=QUEUE_SIZE)
         self.worker = threading.Thread(target=self._consume, daemon=True)
+        self._server: socket.socket | None = None
 
     # ------------------------------------------------------------------ 输出
 
     def _emit(self, record: dict) -> None:
         if self.cfg.jsonl is not None:
+            payload = {k: v for k, v in record.items() if not k.startswith("_")}
             with open(self.cfg.jsonl, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         if callable(self.cfg.on_result):
             try:
                 self.cfg.on_result(record)
@@ -287,7 +294,11 @@ class CaptureProxy:
             started = time.time()
             raw = record.pop("raw", b"")
             try:
-                record["analysis"] = analyze(raw, self.cfg.domains).to_dict()
+                analysis = analyze(raw, self.cfg.domains)
+                record["analysis"] = analysis.to_dict()
+                # 私有字段（下划线开头）：只给"一键出 PoC"用，绝不进 JSONL
+                record["_finding"] = analysis.top_finding
+                record["_top_domain"] = analysis.top.domain if analysis.top else ""
             except Exception as exc:         # noqa: BLE001 —— 一条算不动不许停整个捕获
                 record["analysis"] = None
                 record["skip"] = f"分析异常：{type(exc).__name__}: {exc}"
@@ -352,6 +363,7 @@ class CaptureProxy:
             previous = self.seen.get(case_id)
             if previous is not None:
                 previous["count"] += 1
+                self.duplicate_counts[case_id] = previous["count"]
                 record = previous
                 duplicate = True
             else:
@@ -399,13 +411,29 @@ class CaptureProxy:
 
     # ------------------------------------------------------------------ 生命周期
 
-    def serve_forever(self) -> None:
-        self.worker.start()
+    def bind(self) -> None:
+        """先把端口占住。
+
+        为什么单独一步：网页里点"开始"时，端口被占必须**同步**报回给用户，
+        而不是死在后台线程里只留一行没人看的日志。
+        """
+        if self._server is not None:
+            return
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((self.cfg.host, self.cfg.port))
+        try:
+            server.bind((self.cfg.host, self.cfg.port))
+        except OSError:
+            server.close()
+            raise
         server.listen(128)
         server.settimeout(0.3)
+        self._server = server
+
+    def serve_forever(self) -> None:
+        self.bind()
+        server = self._server
+        self.worker.start()
         print(f"捕获代理已就绪：{self.cfg.host}:{self.cfg.port}"
               f"（HTTP 明文；HTTPS 只做隧道直通）")
         print("把浏览器 / 客户端 / 系统代理指向它即可；Ctrl+C 停止。"

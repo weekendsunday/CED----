@@ -444,6 +444,27 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
   .capbar li{flex:1 1 42%}
 }
 </style>
+<style>
+/* ===== 单一入口：DAG / 实时报告 / 设置（新增，不动既有样式）===== */
+.dag{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dag .node{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);min-width:118px;transition:border-color .15s,background .15s}
+.dag .node .t{font-size:13px;font-weight:600}
+.dag .node .s{font-size:12px;color:var(--ink-3);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dag .node.running{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.dag .node.done{border-color:var(--good-line);background:var(--good-soft)}
+.dag .arrow{color:var(--ink-3)}
+.report{max-height:340px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.fold{margin-top:12px;border:1px dashed var(--line-2);border-radius:10px;padding:8px 12px;background:var(--surface-2)}
+.fold>summary{cursor:pointer;font-weight:600;color:var(--ink-2);font-size:13px}
+.fold[open]>summary{margin-bottom:10px}
+.settings-grid{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+.settings-grid fieldset.set{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0}
+.settings-grid legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--ink-2)}
+.settings-grid label{display:block;font-size:12px;color:var(--ink-3);margin:8px 0}
+.settings-grid .input,.settings-grid .select{width:100%;margin-top:4px}
+.settings-grid .form-row-3 label{margin:0}
+@media(max-width:900px){.settings-grid{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 <header class="masthead">
@@ -464,18 +485,60 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 
 <nav class="tabs">
   <div class="tabs-inner">
-    <button class="tab active" data-tab="scan">扫描</button>
-    <button class="tab" data-tab="verify">验证外部发现</button>
-    <button class="tab" data-tab="ledger">提案台账</button>
-    <button class="tab" data-tab="probe">探测文件</button>
-    <button class="tab" data-tab="cases">内置案例</button>
+    <button class="tab active" data-tab="detect">检测</button>
+    <button class="tab" data-tab="settings">设置</button>
     <button class="tab" data-tab="check">自检</button>
   </div>
 </nav>
 
 <main class="shell">
   <!-- ============ 扫描 ============ -->
-  <section class="panel active" id="tab-scan">
+  <!-- ============ 检测：唯一入口 ============ -->
+  <section class="panel active" id="tab-detect">
+    <div class="card">
+      <div class="card-hd"><h2>检测</h2><span class="hint">把东西粘/拖进来就行 —— 它自己判断这是什么、自动选路、跑完整链路。<b>输入是字节或清单，不是源码/程序</b></span></div>
+      <textarea class="paste" id="dt-text" rows="7" placeholder="粘这里，哪种都行：
+① 一条 HTTP 请求的原始字节（抓包导出 —— 用记事本另存会改换行符，别那么干）
+② nuclei JSON / JSONL、Burp XML、HAR、curl 命令行、URL 清单
+③ 或者点下面的「开始自动捕获」，让浏览器/客户端的请求自己流进来"></textarea>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="dt-go">开始检测</button>
+        <button class="btn btn-ghost" id="dt-file-btn">选择文件…</button>
+        <input type="file" id="dt-file" hidden>
+        <select class="select" id="dt-sample"><option value="">载入示例…</option></select>
+        <select class="select" id="dt-domain"><option value="">全部 5 个领域</option></select>
+        <span class="note" id="dt-hint">识别与编排全自动；判定由确定性内核给出</span>
+      </div>
+      <div id="dt-err"></div>
+      <div id="dt-warn"></div>
+      <div class="note">原始请求要<b>字节保真</b>：用「选择文件」读抓包导出的 .bin/.txt（按字节读入），
+        或直接用下面的「自动捕获」；<b>粘贴框里的 CRLF 会被浏览器规范化成 LF</b>（粘文本类输入如
+        nuclei / curl / URL 清单则无妨）。文件按字节读入 —— 含中文的文本类文件在框里显示可能乱码，不影响分析。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>自动链路</h2><span class="hint">实时显示它跑到哪一步（绿=完成，蓝=进行中）</span></div>
+      <div class="dag" id="dt-dag"></div>
+      <div class="note" id="dt-dag-detail">—</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>实时报告</h2><span class="hint">边跑边吐，不用等跑完</span>
+        <button class="btn btn-ghost" id="dt-copy">复制报告</button></div>
+      <pre class="report" id="dt-report">（还没开始）</pre>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>发现</h2><span class="hint">点一条看证据；安全级的会带端到端 PoC</span></div>
+      <div class="split">
+        <div><div class="note" id="dt-count">0 条</div><div class="evlist" id="dt-list">
+          <div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div></div></div>
+        <div><div id="dt-evidence" class="note">← 左边点一条</div></div>
+      </div>
+    </div>
+
+    <details class="fold"><summary>内置矩阵扫描（不需要输入：5 领域 × 51 实现互相差分）</summary>
+  <section class="legacy" id="tab-scan">
     <div class="card">
       <div class="card-hd"><h2>扫描任务</h2>
           <span class="hint">同一份字节做定向差分扫描，命中即产出可复现证据链</span></div>
@@ -567,36 +630,38 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
       </div>
     </div>
   </section>
+    </details>
 
-
-  <!-- ============ 提案台账 ============ -->
-  <section class="panel" id="tab-ledger">
+    <details class="fold"><summary>验证外部发现（旧的独立入口，功能已被上面的自动检测覆盖）</summary>
+  <section class="legacy" id="tab-verify">
     <div class="card">
-      <div class="card-hd"><h2>模型提案</h2><span class="hint">提案必须通过差分 oracle 的准入实验才算命中</span></div>
-      <div id="ledger-status" class="note">模型状态检查中…</div>
+      <div class="card-hd"><h2>验证外部发现</h2>
+        <span class="hint">确定性内核给结论，不看报告方的自述</span></div>
+      <p class="lead">把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当作<strong>待验证的假设</strong>，
+        用与扫描<strong>完全相同</strong>的差分 + 消融链路去证实或证伪。
+        <strong>结论由确定性内核给出，不看报告方的自述</strong> —— 这就是"做扫描器的裁判"。</p>
+      <textarea class="paste" id="vfy-text" rows="8"
+        placeholder="粘贴一份清单：nuclei 的 JSONL、Burp 的 sitemap XML、HAR、curl 命令行，或每行一条 URL"></textarea>
       <div class="btn-row">
-        <button class="btn btn-primary" id="propose-go" disabled>让模型提一批新提案</button>
-        <span class="note" id="propose-hint">—</span>
-      </div>
-      <div id="propose-err"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-hd"><h2>台账统计</h2></div>
-      <div class="statcards" id="ledger-stats"></div>
-      <div class="note">命中 = 提案通过了差分 oracle 的准入实验，不是模型自述</div>
-    </div>
-
-    <div class="card">
-      <div class="card-hd"><h2>最近提案</h2><span class="hint">(<span id="ledger-count">0</span>) 点一行展开字节</span></div>
-      <div id="ledger-table">
-        <div class="skeleton w60"></div><div class="skeleton w80"></div><div class="skeleton w60"></div>
+        <div class="field"><label>格式</label>
+          <select id="vfy-fmt">
+            <option value="auto">自动识别</option>
+            <option value="nuclei">nuclei</option>
+            <option value="burp">Burp sitemap</option>
+            <option value="har">HAR</option>
+            <option value="curl">curl</option>
+            <option value="list">普通清单</option>
+          </select></div>
+        <button class="btn btn-primary" id="vfy-go">开始验证</button>
+        <span class="note" id="vfy-hint">每条假设都会在全部已注册领域上试一遍</span>
       </div>
     </div>
+    <div id="vfy-result"></div>
   </section>
+    </details>
 
-  <!-- ============ 探测文件 ============ -->
-  <section class="panel" id="tab-probe">
+    <details class="fold"><summary>探测文件（拖一份原始字节，自己指定对比哪一对实现）</summary>
+  <section class="legacy" id="tab-probe">
     <div class="card">
       <div class="card-hd"><h2>探测文件</h2><span class="hint">拿抓包导出的原始字节，看两侧理解是否一致</span></div>
       <div class="drop" id="drop">
@@ -638,9 +703,136 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 
     <div id="probe-result"></div>
   </section>
+    </details>
 
-  <!-- ============ 内置案例 ============ -->
-  <section class="panel" id="tab-cases">
+    <details class="fold"><summary>自动捕获（本机代理，无需手动导出）</summary>
+  <section class="legacy" id="tab-capture">
+    <div class="card">
+      <div class="card-hd"><h2>自动捕获</h2>
+        <span class="hint">把浏览器或系统代理指向本端口，请求<b>自动</b>进差分 ——
+          输入是<b>字节</b>，不是源码/程序；HTTPS 只做隧道直通</span></div>
+      <div class="form-row-3">
+        <div class="field"><label>代理端口</label>
+          <input class="input" type="text" id="cap-port" value="18081"></div>
+        <div class="field"><label>领域</label><select class="select" id="cap-domain">
+          <option value="">全部 5 个领域</option></select></div>
+        <div class="field"><label class="check"><input type="checkbox" id="cap-all">
+          <span>连静态资源也分析</span></label></div>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="cap-go">开始捕获</button>
+        <button class="btn btn-danger" id="cap-stop" disabled>停止</button>
+        <span class="note" id="cap-state">未启动</span>
+      </div>
+      <div id="cap-err"></div>
+      <div class="statcards" id="cap-stats"></div>
+      <div class="note">用法：把浏览器/客户端的 HTTP 代理设成
+        <code>127.0.0.1:&lt;端口&gt;</code>（或设成系统代理），然后正常访问自己的站点即可。
+        仅用于你自有或已获授权的目标。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>捕获到的请求</h2>
+        <span class="hint">同一份字节只分析一次；点一行看证据、一键出最小复现样本与 PoC</span></div>
+      <div class="split">
+        <div>
+          <div class="note" id="cap-count">0 条</div>
+          <div class="evlist" id="cap-list">
+            <div class="empty"><b>还没有请求</b>点上面的「开始捕获」，再把代理指过来</div>
+          </div>
+        </div>
+        <div>
+          <div id="cap-evidence" class="note">← 左边点一条</div>
+        </div>
+      </div>
+    </div>
+  </section>
+    </details>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section class="panel" id="tab-settings">
+    <div class="card">
+      <div class="card-hd"><h2>设置</h2><span class="hint">所有可配置项都在这一页；保存即生效（模型配置在服务启动时也会自动加载）</span></div>
+      <div class="settings-grid">
+        <fieldset class="set"><legend>模型 API 接入（可选，不配也能跑）</legend>
+          <label>端点 base_url<input class="input" id="set-llm-base" placeholder="http://127.0.0.1:8000/v1（OpenAI 兼容）"></label>
+          <label>模型名 model<input class="input" id="set-llm-model" placeholder="如 qwen2.5:7b"></label>
+          <label>API Key<input class="input" id="set-llm-key" type="password" placeholder="留空 = 不改动已保存的"><span class="note" id="set-llm-keyhint">—</span></label>
+          <div class="form-row-3">
+            <label>超时(s)<input class="input" id="set-llm-timeout"></label>
+            <label>温度<input class="input" id="set-llm-temp"></label>
+            <label>max_tokens<input class="input" id="set-llm-tokens"></label>
+          </div>
+        </fieldset>
+        <fieldset class="set"><legend>自动捕获默认值</legend>
+          <label>代理端口<input class="input" id="set-cap-port"></label>
+          <label>记录文件（JSONL；留空 = 只留内存）<input class="input" id="set-cap-jsonl"></label>
+          <label class="check"><input type="checkbox" id="set-cap-all"> <span>连静态资源也分析</span></label>
+        </fieldset>
+        <fieldset class="set"><legend>扫描默认值</legend>
+          <div class="form-row-3">
+            <label>领域<select class="select" id="set-scan-domain"></select></label>
+            <label>模式<select class="select" id="set-scan-mode"><option value="axis">axis（按轴定向）</option><option value="cross">cross（全部两两）</option></select></label>
+            <label>用例上限<input class="input" id="set-scan-limit"></label>
+          </div>
+          <label>随机种子<input class="input" id="set-scan-seed"></label>
+        </fieldset>
+        <fieldset class="set"><legend>输出路径</legend>
+          <label>PoC 目录<input class="input" id="set-poc-dir"></label>
+          <label>报告目录<input class="input" id="set-report-dir"></label>
+        </fieldset>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="set-save">保存设置</button>
+        <button class="btn btn-ghost" id="set-reload">重新载入</button>
+        <span class="note" id="set-state">配置文件：—</span>
+      </div>
+      <div id="set-err"></div>
+    </div>
+
+    <details class="fold"><summary>模型提案台账（模型只提案、内核只裁决）</summary>
+  <section class="legacy" id="tab-ledger">
+    <div class="card">
+      <div class="card-hd"><h2>模型提案</h2><span class="hint">提案必须通过差分 oracle 的准入实验才算命中</span></div>
+      <div id="ledger-status" class="note">模型状态检查中…</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="propose-go" disabled>让模型提一批新提案</button>
+        <span class="note" id="propose-hint">—</span>
+      </div>
+      <div id="propose-err"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>台账统计</h2></div>
+      <div class="statcards" id="ledger-stats"></div>
+      <div class="note">命中 = 提案通过了差分 oracle 的准入实验，不是模型自述</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>最近提案</h2><span class="hint">(<span id="ledger-count">0</span>) 点一行展开字节</span></div>
+      <div id="ledger-table">
+        <div class="skeleton w60"></div><div class="skeleton w80"></div><div class="skeleton w60"></div>
+      </div>
+    </div>
+  </section>
+    </details>
+  </section>
+
+  <!-- ============ 自检与参考 ============ -->
+  <section class="panel" id="tab-check">
+  <section class="legacy" id="tab-check">
+    <div class="card">
+      <div class="card-hd"><h2>自检</h2><span class="hint">先证明程序能重新挖出已知的，再谈能发现未知的</span></div>
+      <p class="lead">跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="runchk">跑自检</button>
+      </div>
+      <div id="checkresult" class="stack"></div>
+    </div>
+  </section>
+    <details class="fold"><summary>内置案例库（47 个已知案例，点开看两侧观测与判定）</summary>
+  <section class="legacy" id="tab-cases">
     <div class="card">
       <div class="card-hd"><h2>已知案例库</h2><span class="hint">(<span id="casecount">0</span> 个)</span></div>
       <div class="split">
@@ -653,44 +845,9 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
       </div>
     </div>
   </section>
+    </details>
+  </section>
 
-  <!-- ============ 自检 ============ -->
-  <section class="panel" id="tab-check">
-    <div class="card">
-      <div class="card-hd"><h2>自检</h2><span class="hint">先证明程序能重新挖出已知的，再谈能发现未知的</span></div>
-      <p class="lead">跑一遍已知案例反验证 —— 先证明程序能重新挖出已知的，再谈能发现未知的。</p>
-      <div class="btn-row">
-        <button class="btn btn-primary" id="runchk">跑自检</button>
-      </div>
-      <div id="checkresult" class="stack"></div>
-    </div>
-  </section>
-  <!-- ============ 验证外部发现 ============ -->
-  <section class="panel" id="tab-verify">
-    <div class="card">
-      <div class="card-hd"><h2>验证外部发现</h2>
-        <span class="hint">确定性内核给结论，不看报告方的自述</span></div>
-      <p class="lead">把别人的命中（nuclei / Burp / HAR / curl / 普通清单）当作<strong>待验证的假设</strong>，
-        用与扫描<strong>完全相同</strong>的差分 + 消融链路去证实或证伪。
-        <strong>结论由确定性内核给出，不看报告方的自述</strong> —— 这就是"做扫描器的裁判"。</p>
-      <textarea class="paste" id="vfy-text" rows="8"
-        placeholder="粘贴一份清单：nuclei 的 JSONL、Burp 的 sitemap XML、HAR、curl 命令行，或每行一条 URL"></textarea>
-      <div class="btn-row">
-        <div class="field"><label>格式</label>
-          <select id="vfy-fmt">
-            <option value="auto">自动识别</option>
-            <option value="nuclei">nuclei</option>
-            <option value="burp">Burp sitemap</option>
-            <option value="har">HAR</option>
-            <option value="curl">curl</option>
-            <option value="list">普通清单</option>
-          </select></div>
-        <button class="btn btn-primary" id="vfy-go">开始验证</button>
-        <span class="note" id="vfy-hint">每条假设都会在全部已注册领域上试一遍</span>
-      </div>
-    </div>
-    <div id="vfy-result"></div>
-  </section>
 
 </main>
 
@@ -1593,6 +1750,484 @@ onTabShown('scan');
     new MutationObserver(mark).observe(ev, {childList:true, subtree:true});
     mark();
   }
+})();
+
+/* ===== 单一入口：检测（自动识别 + 自动编排 + DAG + 实时报告）与设置 ===== */
+(function(){
+  const el = id => document.getElementById(id);
+  const NODES = [["identify","识别输入"],["extract","按领域取段"],["diff","逐对差分"],
+                 ["judge","消融判定"],["poc","升级 / PoC"],["report","出报告"]];
+  let es = null, lines = [], findings = [], lastReport = "";
+
+  function initDag(){
+    el('dt-dag').innerHTML = NODES.map((pair, i) =>
+      (i ? '<span class="arrow">→</span>' : '') +
+      `<div class="node" data-node="${pair[0]}"><div class="t">${esc(pair[1])}</div><div class="s">待运行</div></div>`
+    ).join('');
+  }
+  function setNode(node, state, detail){
+    const box = el('dt-dag').querySelector(`.node[data-node="${node}"]`);
+    if (!box) return;
+    box.classList.toggle('running', state === 'running');
+    box.classList.toggle('done', state === 'done');
+    if (detail){
+      const text = String(detail);
+      box.querySelector('.s').textContent = text.length > 22 ? text.slice(0,22) + '…' : text;
+      el('dt-dag-detail').textContent = node + '：' + text;
+    }
+  }
+  function badge(f){
+    if (f.verdict){
+      return {confirmed:'<span class="badge security">已证实</span>',
+              refuted:'<span class="badge compatibility">未证实</span>',
+              unverifiable:'<span class="badge unknown">证不了</span>'}[f.verdict] || '';
+    }
+    return {security:'<span class="badge security">安全级</span>',
+            unknown:'<span class="badge unknown">疑点</span>',
+            compatibility:'<span class="badge compatibility">兼容性</span>'}[f.level] || '';
+  }
+  function titleOf(f){
+    return f.domain ? (f.domain + '｜' + f.left + ' ↔ ' + f.right + '｜' + (f.kind || ''))
+                    : (f.target || '');
+  }
+  function renderFindings(){
+    el('dt-count').textContent = findings.length + ' 条';
+    const box = el('dt-list');
+    if (!findings.length){
+      box.innerHTML = '<div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div>';
+      return;
+    }
+    box.innerHTML = findings.map((f, i) =>
+      `<div class="evitem" data-i="${i}"><div class="id">${esc(titleOf(f)).slice(0, 46)}</div>
+        <div class="meta">${badge(f)}　${esc(String(f.kind || f.detail || '')).slice(0, 44)}</div></div>`
+    ).join('');
+    box.querySelectorAll('.evitem').forEach(node => node.onclick = () => {
+      box.querySelectorAll('.evitem').forEach(x => x.classList.remove('sel'));
+      node.classList.add('sel');
+      showEvidence(findings[parseInt(node.dataset.i, 10)]);
+    });
+  }
+  function showEvidence(f){
+    if (!f) return;
+    let h = `<div class="kv"><span class="k">对象</span>${esc(titleOf(f))}</div>`;
+    if (f.cwe) h += `<div class="kv"><span class="k">CWE</span>${esc(f.cwe)}　<span class="k">场景</span>${esc(f.scenario || '—')}</div>`;
+    if (f.reason) h += `<div class="kv"><span class="k">判定理由</span>${esc(f.reason)}</div>`;
+    if (f.ablation) h += `<div class="kv"><span class="k">可控性证据</span>${esc(f.ablation)}</div>`;
+    if (f.evidence) h += `<div class="kv"><span class="k">证据</span>${esc(f.evidence)}</div>`;
+    if (f.detail) h += `<div class="kv"><span class="k">说明</span>${esc(f.detail)}</div>`;
+    if (f.effect) h += `<div class="kv"><span class="k">安全后果</span>${esc(f.effect)}</div>`;
+    if (f.fix) h += `<div class="kv"><span class="k">修复建议</span>${esc(f.fix)}</div>`;
+    if (f.minimized_repr) h += `<pre>${esc(f.minimized_repr)}</pre>`;
+    if (f.poc){
+      h += `<div class="sect"><div class="note"><b>端到端 PoC｜${esc(f.poc.title || '')}</b></div>`;
+      if (f.poc.chain_desc) h += `<div class="kv"><span class="k">链路</span>${esc(f.poc.chain_desc)}</div>`;
+      if (f.poc.steps && f.poc.steps.length)
+        h += `<div class="kv"><span class="k">复现步骤</span>${f.poc.steps.map(esc).join('　→　')}</div>`;
+      if (f.poc.script) h += `<pre>${esc(f.poc.script)}</pre>`;
+      h += `</div>`;
+    } else if (f.level === 'security'){
+      h += `<div class="note">该领域这条没生成 PoC（按口径只对 security 级生成）。</div>`;
+    }
+    const box = el('dt-evidence'); box.className = ''; box.innerHTML = h;
+  }
+  function closeStream(){ if (es){ es.close(); es = null; } }
+  function handle(ev){
+    if (ev.type === 'stage'){
+      setNode(ev.node, ev.state, ev.detail);
+    } else if (ev.type === 'report'){
+      lines.push(ev.line);
+      const pre = el('dt-report');
+      pre.textContent = lines.join('\n');
+      pre.scrollTop = pre.scrollHeight;
+    } else if (ev.type === 'finding'){
+      findings.push(ev); renderFindings();
+    } else if (ev.type === 'done'){
+      closeStream(); renderFindings();
+      if (ev.result && ev.result.report) lastReport = ev.result.report;
+    } else if (ev.type === 'error'){
+      el('dt-err').innerHTML = '<div class="err">' + esc(ev.error) + '</div>';
+      closeStream();
+    }
+  }
+  async function go(){
+    const text = exact ? latin1(exact) : el('dt-text').value;
+    if (!text.trim()){
+      el('dt-err').innerHTML = '<div class="err">先粘一份输入进来（或用下面的自动捕获）</div>';
+      return;
+    }
+    el('dt-err').innerHTML = ''; lines = []; findings = []; lastReport = '';
+    checkMangled();
+    el('dt-report').textContent = ''; el('dt-list').innerHTML = '';
+    el('dt-evidence').className = 'note'; el('dt-evidence').textContent = '← 左边点一条';
+    initDag(); renderFindings();
+    const body = {text: text};
+    const domain = el('dt-domain').value;
+    if (domain) body.domains = [domain];
+    try {
+      const resp = await fetch('/api/detect', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      const info = await resp.json();
+      if (info.error){
+        el('dt-err').innerHTML = '<div class="err">' + esc(info.error).replace(/\n/g, '<br>') + '</div>';
+        return;
+      }
+      el('dt-hint').textContent = '识别为 ' + info.kind + '：' + info.why;
+      closeStream();
+      es = new EventSource('/api/detect/events?job_id=' + encodeURIComponent(info.job_id));
+      es.onmessage = m => { try { handle(JSON.parse(m.data)); } catch (e) { /* 半条消息忽略 */ } };
+    } catch (err){
+      el('dt-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>';
+    }
+  }
+  el('dt-go').onclick = go;
+  el('dt-file-btn').onclick = () => el('dt-file').click();
+  // textarea 的 value 会被浏览器规范化（CR 全被吃掉）—— 所以原始字节**另存一份**：
+  // 文件按字节读进来之后，送检的是这份 exact，而不是文本框里的文本。
+  let exact = null;
+  function latin1(bytes){
+    let text = '';
+    for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+    return text;
+  }
+  el('dt-file').onchange = e => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    // 按**字节**读入：用 readAsText('utf-8') 会改掉非 ASCII 字节，等于自己造字节（本项目的红线）。
+    const reader = new FileReader();
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      exact = bytes;
+      el('dt-text').value = latin1(bytes);      // 仅作显示
+      el('dt-hint').textContent = '已按字节读入 ' + bytes.length + ' 字节：' + file.name
+        + '（文本框仅用于显示，送检用的是原始字节）';
+      checkMangled();
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  function checkMangled(){
+    if (exact){
+      el('dt-warn').innerHTML = '<div class="alert alert-info">这份输入是按<b>字节</b>读入的（'
+        + exact.length + ' 字节）：送检的就是原始字节，不会被规范化。</div>';
+      return;
+    }
+    const text = el('dt-text').value;
+    const first = (text.split('\n')[0] || '');
+    const looksRequest = /^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH|TRACE|CONNECT) \S+ HTTP\/1\.[01]/.test(first);
+    const mangled = looksRequest && text.indexOf('\n') >= 0 && text.indexOf('\r') < 0;
+    el('dt-warn').innerHTML = mangled
+      ? ('<div class="alert alert-warn">这份输入<b>只有 LF、没有 CR</b>：浏览器会把粘贴框里的 CRLF 规范化成 LF，'
+         + '原始字节已不保真。要测真实字节，请改用「选择文件」（抓包导出的 .bin/.txt）或下面的「自动捕获」。'
+         + '下面照实分析这份 LF 版本。</div>')
+      : '';
+  }
+  el('dt-text').oninput = () => { exact = null; checkMangled(); };
+
+  /* 载入示例：samples/ 下的样本按字节取回，同样进 exact 缓冲（原始请求要保真） */
+  (async function fillSamples(){
+    try {
+      const data = await (await fetch('/api/samples')).json();
+      (data.samples || []).forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.name;
+        opt.textContent = item.name + '（' + item.size + ' 字节）';
+        el('dt-sample').appendChild(opt);
+      });
+    } catch (e) { /* 没有样本目录也不影响主流程 */ }
+  })();
+  el('dt-sample').onchange = async e => {
+    const name = e.target.value;
+    if (!name) return;
+    const url = '/samples/' + name.split('/').map(encodeURIComponent).join('/');
+    try {
+      const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+      exact = bytes;
+      el('dt-text').value = latin1(bytes);
+      el('dt-hint').textContent = '已载入示例：' + name + '（' + bytes.length + ' 字节，按字节送检）';
+      checkMangled();
+    } catch (err){
+      el('dt-err').innerHTML = '<div class="err">载入示例失败：' + esc(err) + '</div>';
+    }
+  };
+  el('dt-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(lastReport || lines.join('\n')); el('dt-copy').textContent = '已复制'; }
+    catch (e) { el('dt-copy').textContent = '复制失败'; }
+    setTimeout(() => { el('dt-copy').textContent = '复制报告'; }, 1500);
+  };
+  initDag();
+
+  (async function fillDomains(){
+    try {
+      const data = await (await fetch('/api/domains')).json();
+      (data.domains || []).forEach(item => {
+        [el('dt-domain'), el('set-scan-domain')].forEach(sel => {
+          if (!sel || sel.querySelector('option[value="' + item.name + '"]')) return;
+          const opt = document.createElement('option');
+          opt.value = item.name;
+          opt.textContent = item.name + '（' + item.impls + ' 实现）';
+          sel.appendChild(opt);
+        });
+      });
+    } catch (e) { /* 拿不到领域列表也不影响主流程 */ }
+  })();
+
+  /* ---------- 设置 ---------- */
+  function fillSettings(s){
+    el('set-llm-base').value = s.llm.base_url || '';
+    el('set-llm-model').value = s.llm.model || '';
+    el('set-llm-key').value = '';
+    el('set-llm-keyhint').textContent = s.llm.api_key_set
+      ? ('已保存：' + s.llm.api_key + '（留空 = 不改）') : '尚未设置';
+    el('set-llm-timeout').value = s.llm.timeout;
+    el('set-llm-temp').value = s.llm.temperature;
+    el('set-llm-tokens').value = s.llm.max_tokens;
+    el('set-cap-port').value = s.capture.port;
+    el('set-cap-jsonl').value = s.capture.jsonl || '';
+    el('set-cap-all').checked = !!s.capture.analyze_all;
+    el('set-scan-domain').value = s.scan.domain;
+    el('set-scan-mode').value = s.scan.mode;
+    el('set-scan-limit').value = s.scan.limit;
+    el('set-scan-seed').value = s.scan.seed;
+    el('set-poc-dir').value = s.paths.poc_dir;
+    el('set-report-dir').value = s.paths.report_dir;
+    el('set-state').textContent = '配置文件：' + s.path;
+  }
+  async function loadSettings(){
+    try { fillSettings(await (await fetch('/api/settings')).json()); }
+    catch (e) { el('set-err').innerHTML = '<div class="err">读取设置失败：' + esc(e) + '</div>'; }
+  }
+  el('set-reload').onclick = loadSettings;
+  el('set-save').onclick = async () => {
+    el('set-err').innerHTML = '';
+    const payload = {
+      llm: {base_url: el('set-llm-base').value.trim(),
+            model: el('set-llm-model').value.trim(),
+            timeout: parseFloat(el('set-llm-timeout').value) || 60,
+            temperature: parseFloat(el('set-llm-temp').value) || 0.3,
+            max_tokens: parseInt(el('set-llm-tokens').value, 10) || 2048},
+      capture: {port: parseInt(el('set-cap-port').value, 10) || 18081,
+                jsonl: el('set-cap-jsonl').value.trim(),
+                analyze_all: el('set-cap-all').checked},
+      scan: {domain: el('set-scan-domain').value,
+             mode: el('set-scan-mode').value,
+             limit: parseInt(el('set-scan-limit').value, 10) || 60,
+             seed: parseInt(el('set-scan-seed').value, 10) || 42},
+      paths: {poc_dir: el('set-poc-dir').value.trim(),
+              report_dir: el('set-report-dir').value.trim()}
+    };
+    const key = el('set-llm-key').value.trim();
+    if (key) payload.llm.api_key = key;      // 留空 = 不改动已保存的密钥
+    try {
+      const resp = await fetch('/api/settings', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const info = await resp.json();
+      if (info.error){
+        el('set-err').innerHTML = '<div class="err">' + esc(info.error).replace(/\n/g, '<br>') + '</div>';
+        return;
+      }
+      fillSettings(info.settings);
+      el('set-state').textContent = '已保存：' + info.settings.path;
+    } catch (err){
+      el('set-err').innerHTML = '<div class="err">保存失败：' + esc(err) + '</div>';
+    }
+  };
+  loadSettings();
+})();
+
+/* ===== 自动捕获：起/停本机代理 + 实时列表 + 证据 + 一键出 PoC ===== */
+(function(){
+  const box = id => document.getElementById(id);
+  let seq = 0, timer = null, rows = [], sel = null;
+
+  function statCard(label, value, hint){
+    return `<div class="statcard" title="${esc(hint)}"><div class="v">${value}</div><div class="k">${esc(label)}</div></div>`;
+  }
+  function renderStats(s){
+    if (!s) return;
+    box('cap-stats').innerHTML =
+      statCard('请求', s.requests, '代理一共看到多少条请求（含重复）') +
+      statCard('已分析', s.analyzed, '真正跑过差分 oracle 的请求数') +
+      statCard('跳过', s.skipped, '静态资源 / 队列满 / 取不到观测对象') +
+      statCard('HTTPS 隧道', s.tunnels, 'CONNECT 直通、未拆包（本期不做 TLS 明文）') +
+      statCard('分歧', s.divergences, '所有已分析请求的分歧总数（跨 5 个领域）') +
+      statCard('安全级请求', s.security_requests, '至少有一条 security 级分歧的请求数');
+  }
+  function verdictBadge(r){
+    if (r.tunnel) return '<span class="badge">HTTPS 隧道</span>';
+    if (r.skip) return '<span class="badge">跳过</span>';
+    const a = r.analysis;
+    if (!a) return '<span class="badge">分析中…</span>';
+    if (a.security) return '<span class="badge security">安全级 ' + a.security + '</span>';
+    if (a.divergences) return '<span class="badge unknown">疑点 ' + a.divergences + '</span>';
+    return '<span class="badge compatibility">一致</span>';
+  }
+  function rowHtml(r){
+    const times = r.count > 1 ? ` <span class="badge" title="同一份字节又来了">×${r.count}</span>` : '';
+    const extra = r.tunnel ? '（未拆包）'
+                : (r.skip ? esc(r.skip) : (r.elapsed_ms == null ? '分析中…' : r.elapsed_ms + 'ms'));
+    const active = (sel && sel.case_id && sel.case_id === r.case_id) ? ' sel' : '';
+    return `<div class="evitem${active}" data-case="${esc(r.case_id || '')}">
+      <div class="id">${esc(r.method)} ${esc(r.host)}${esc(r.path || '')}${times}</div>
+      <div class="meta">${verdictBadge(r)}　${extra}</div>
+    </div>`;
+  }
+  function renderList(){
+    const list = box('cap-list');
+    const view = rows.slice(-200);
+    list.innerHTML = view.map(rowHtml).join('') ||
+      '<div class="empty"><b>还没有请求</b>把代理指过来试试</div>';
+    list.querySelectorAll('.evitem').forEach(el => {
+      el.onclick = () => {
+        const found = rows.find(x => (x.case_id || '') === el.dataset.case);
+        if (!found) return;
+        sel = found;
+        list.querySelectorAll('.evitem').forEach(x => x.classList.remove('sel'));
+        el.classList.add('sel');
+        detail(found.case_id);
+      };
+    });
+    box('cap-count').textContent = rows.length + ' 条'
+      + (rows.length > view.length ? '（只显示最近 200 条；完整记录在 JSONL 里）' : '');
+  }
+  function evHtml(d){
+    let h = `<div class="kv"><span class="k">请求</span>${esc(d.method)} ${esc(d.host)}${esc(d.path || '')}</div>`;
+    h += `<div class="kv"><span class="k">原始长度</span>${d.raw_len} 字节`;
+    if (d.normalized) h += `　<span class="note">分析用的是源站形式（代理形式的请求行已归一化）</span>`;
+    h += `</div>`;
+    const a = d.analysis;
+    if (a){
+      h += `<div class="sect"><div class="note"><b>各领域</b></div>`;
+      Object.keys(a.domains).forEach(name => {
+        const row = a.domains[name];
+        h += `<div class="kv"><span class="k">${esc(name)}</span>对照 ${row.pairs} 对 · `
+           + `分歧 ${row.divergences} · 安全级 ${row.security}`
+           + (row.note ? `　<span class="badge">${esc(row.note)}</span>` : '') + `</div>`;
+      });
+      h += `</div>`;
+    }
+    const top = a && a.top;
+    if (top){
+      h += `<div class="sect"><div class="note"><b>最强的一条｜领域 ${esc(top.domain)}</b></div>
+        <div class="kv"><span class="k">对照</span>${esc(top.left)} ↔ ${esc(top.right)}　<span class="k">类型</span>${esc(top.kind)}</div>
+        <div class="kv"><span class="k">CWE</span>${esc(top.cwe || '—')}　<span class="k">场景</span>${esc(top.scenario || '—')}</div>
+        <div class="kv"><span class="k">判定理由</span>${esc(top.reason)}</div>
+        <div class="kv"><span class="k">可控性证据</span>${esc(top.ablation || '—')}</div>
+        <div class="kv"><span class="k">安全后果</span>${esc(top.effect || '—')}</div>
+        <div class="kv"><span class="k">修复建议</span>${esc(top.fix || '—')}</div>
+        <div class="boundary">已证实 · 内核产出</div>
+        <div class="toolbar"><button class="btn btn-primary" id="cap-poc">生成端到端 PoC</button>
+          <span class="note" id="cap-poc-out"></span></div>
+        <div id="cap-poc-body"></div>
+      </div>`;
+    } else if (a){
+      h += `<div class="note">这条请求在 5 个领域里都没有分歧 —— 按口径不生成 PoC。</div>`;
+    }
+    h += `<div class="sect"><div class="note"><b>留证的原始字节</b>（客户端原样发的字节）</div>
+      <pre>${esc(d.raw_preview || '（已裁剪）')}</pre></div>`;
+    return h;
+  }
+  async function detail(caseId){
+    const ev = box('cap-evidence');
+    if (!caseId){ ev.className = 'note'; ev.textContent = '这条是 HTTPS 隧道（未拆包），没有证据可看'; return; }
+    ev.className = '';
+    ev.innerHTML = '<div class="note">加载中…</div>';
+    try {
+      const d = await (await fetch('/api/capture/record?case_id=' + encodeURIComponent(caseId))).json();
+      if (d.error){ ev.className = 'note'; ev.textContent = d.error; return; }
+      ev.innerHTML = evHtml(d);
+      const btn = box('cap-poc');
+      if (btn) btn.onclick = () => poc(caseId);
+    } catch(err){ ev.className = 'note'; ev.textContent = '请求失败：' + err; }
+  }
+  async function poc(caseId){
+    const out = box('cap-poc-out'); const body = box('cap-poc-body');
+    out.textContent = '生成中…';
+    try {
+      const d = await (await fetch('/api/capture/poc', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({case_id: caseId})})).json();
+      if (!d.ok){ out.textContent = ''; body.innerHTML = '<div class="err">' + esc(d.error || '生成失败') + '</div>'; return; }
+      out.innerHTML = '脚本：<code>' + esc(d.path) + '</code>';
+      body.innerHTML = `<div class="sect"><div class="note"><b>${esc(d.title)}（${esc(d.scenario)} · ${esc(d.cwe)}）</b></div>
+        <div class="kv"><span class="k">链路</span>${esc(d.chain_desc)}</div>
+        <div class="kv"><span class="k">影响</span>${esc(d.impact)}</div>
+        <div class="kv"><span class="k">样本</span>${d.sample_len} 字节</div>
+        <div class="kv"><span class="k">复现步骤</span>${d.steps.map(esc).join('　→　')}</div></div>`;
+    } catch(err){ out.textContent = '请求失败：' + err; }
+  }
+  function stopPolling(){ if (timer){ clearInterval(timer); timer = null; } }
+  function startPolling(){ stopPolling(); timer = setInterval(poll, 1000); }
+  async function poll(){
+    try {
+      const d = await (await fetch('/api/capture/records?since=' + seq)).json();
+      renderStats(d.summary);
+      let touched = false;
+      if (d.counts){
+        Object.keys(d.counts).forEach(cid => {
+          const row = rows.find(x => x.case_id === cid);
+          if (row && row.count !== d.counts[cid]){ row.count = d.counts[cid]; touched = true; }
+        });
+      }
+      if (d.records && d.records.length){
+        rows = rows.concat(d.records);
+        seq = d.records[d.records.length - 1].seq;
+        touched = true;
+      }
+      if (touched) renderList();
+      if (!d.running) stopPolling();
+    } catch(err){ stopPolling(); }
+  }
+  async function go(){
+    box('cap-err').innerHTML = '';
+    const port = parseInt(box('cap-port').value, 10);
+    const domain = box('cap-domain').value;
+    const payload = {port: isNaN(port) ? 18081 : port, analyze_all: box('cap-all').checked};
+    if (domain) payload.domains = [domain];
+    try {
+      const d = await (await fetch('/api/capture/start', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})).json();
+      if (!d.ok){ box('cap-err').innerHTML = '<div class="err">' + esc(d.error || '启动失败') + '</div>'; return; }
+      rows = []; seq = 0; sel = null;
+      box('cap-list').innerHTML = '';
+      box('cap-evidence').className = 'note';
+      box('cap-evidence').textContent = '← 左边点一条';
+      box('cap-state').textContent = '运行中：代理 127.0.0.1:' + d.port + '（HTTP 明文；HTTPS 隧道直通）';
+      box('cap-go').disabled = true; box('cap-stop').disabled = false;
+      renderStats(d.summary);
+      startPolling();
+    } catch(err){ box('cap-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>'; }
+  }
+  async function stop(){
+    try {
+      const d = await (await fetch('/api/capture/stop', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: '{}'})).json();
+      box('cap-state').textContent = '已停止' + (d.summary ? '　' + d.summary.requests + ' 条请求 / 分歧 ' + d.summary.divergences : '');
+      box('cap-go').disabled = false; box('cap-stop').disabled = true;
+      stopPolling();
+      renderStats(d.summary);
+    } catch(err){ box('cap-err').innerHTML = '<div class="err">请求失败：' + esc(err) + '</div>'; }
+  }
+  box('cap-go').onclick = go;
+  box('cap-stop').onclick = stop;
+  (async function sync(){
+    try {
+      const doms = await (await fetch('/api/domains')).json();
+      (doms.domains || []).forEach(x => {
+        const opt = document.createElement('option');
+        opt.value = x.name;
+        opt.textContent = x.name + '（' + x.impls + ' 实现）';
+        box('cap-domain').appendChild(opt);
+      });
+    } catch(err){ /* 拿不到领域列表也不影响主流程 */ }
+    try {
+      const d = await (await fetch('/api/capture/state')).json();
+      if (d.running){
+        box('cap-port').value = d.port;
+        box('cap-state').textContent = '运行中：代理 127.0.0.1:' + d.port;
+        box('cap-go').disabled = true; box('cap-stop').disabled = false;
+        renderStats(d.summary);
+        startPolling();
+      }
+    } catch(err){ /* 服务没起来时安静退出 */ }
+  })();
 })();
 </script>
 </body>

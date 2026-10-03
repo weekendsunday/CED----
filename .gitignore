@@ -9,3 +9,6 @@ refs/
 /ced.db
 /report.md
 /report.json
+
+# 自动捕获的记录（本机代理跑出来的流量记录，含真实请求，绝不入库）
+/capture.jsonl

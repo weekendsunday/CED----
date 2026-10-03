@@ -1,0 +1,463 @@
+"""本机捕获代理：把客户端**真实发出**的请求自动送进差分 oracle。
+
+它不是网卡抓包（那需要 Npcap 驱动 + 管理员权限，而且 HTTPS 只能拿到密文），
+而是一个本机 HTTP 代理：你把浏览器 / 客户端 / 系统代理指向它，请求就自动落进来。
+
+    client ──> 本代理 ──> 真实站点
+                 │
+                 └─ 每条请求：原样记录 → 过滤 / 去重 → 跑差分 → 落 JSONL + 回调
+
+**捕获与转发是两件不同的事**（这条边界要在报告里讲清）：
+  * 捕获的是**客户端原样发来的字节**（记录里的 ``raw_b64`` / ``target`` 就是它）；
+  * 但**送去分析的是"源站会看到的那份字节"** —— 请求行从代理的绝对形式归一化成
+    源站形式（见 ``_origin_form``）。不这么做，每条请求都会因为
+    ``request-line-absolute-uri`` 这条已知分歧轴刷出十几条安全级假阳性；
+  * 转发时只加一条 `Connection: close`（让上游读完即关，省掉响应定帧），其余不动。
+
+本期明确不做：HTTPS 不拆包（`CONNECT` 只做隧道直通，记一条"到 x:443（未拆）"）、
+不做网卡混杂抓包、不解析 pcap、不碰 TLS 明文。
+"""
+from __future__ import annotations
+
+import base64
+import json
+import queue
+import socket
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from ..pipeline import case_id_of
+from .analyze import analyze
+
+#: 单个请求（头 + 体）的读取上限，防内存爆炸
+MAX_REQUEST = 1 << 20
+#: 请求头部的读取上限（超了说明这不是一条正常请求）
+MAX_HEAD = 64 << 10
+#: 连上游 / 读上游的超时
+UPSTREAM_TIMEOUT = 30.0
+#: 分析队列容量：满了就只转发不分析（绝不因为分析而阻塞转发）
+QUEUE_SIZE = 512
+
+#: 默认跳过的静态资源后缀 —— 一个页面里绝大多数请求都是这些，全跑只是噪声
+STATIC_SUFFIXES = (
+    ".css", ".js", ".mjs", ".map", ".json", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".ico", ".webp", ".avif", ".bmp", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".mp4", ".webm", ".mp3", ".wav", ".pdf", ".zip", ".gz", ".br",
+)
+
+
+@dataclass
+class Config:
+    host: str = "127.0.0.1"
+    port: int = 18081
+    jsonl: Path | None = None
+    domains: list[str] | None = None          # None = 全部 5 个领域
+    analyze_all: bool = False                 # True = 连静态资源也分析
+    on_result: object = None                  # callable(record) —— 给 CLI / 前端用
+    stop: threading.Event = field(default_factory=threading.Event)
+
+
+# --------------------------------------------------------------------- 读一条请求
+
+def _read_head(sock: socket.socket, buf: bytes = b"") -> tuple[bytes, bytes]:
+    """读到请求头结束（``\\r\\n\\r\\n``）。返回 (含结束符的头, 之后多读到的字节)。"""
+    while b"\r\n\r\n" not in buf:
+        if len(buf) > MAX_HEAD:
+            return buf, b""
+        chunk = sock.recv(65536)
+        if not chunk:
+            return buf, b""
+        buf += chunk
+    head, _, rest = buf.partition(b"\r\n\r\n")
+    return head + b"\r\n\r\n", rest
+
+
+def _head_field(head: bytes, name: bytes) -> bytes | None:
+    for line in head.split(b"\r\n"):
+        if line.lower().startswith(name):
+            return line.split(b":", 1)[1].strip()
+    return None
+
+
+def _chunked_complete(body: bytes) -> bool:
+    """body 是否已经是一个完整的分块流（含结尾 0 块与最后的空行）。"""
+    i = 0
+    while True:
+        j = body.find(b"\r\n", i)
+        if j < 0:
+            return False
+        token = body[i:j].split(b";")[0].strip()
+        try:
+            size = int(token, 16)
+        except ValueError:
+            return False                     # 畸形块长：不猜
+        i = j + 2
+        if size == 0:
+            while True:                       # 0 块之后允许有 trailer，直到空行
+                k = body.find(b"\r\n", i)
+                if k < 0:
+                    return False
+                if k == i:
+                    return True
+                i = k + 2
+        else:
+            i += size
+            if len(body) < i + 2:
+                return False
+            i += 2                             # 跳过块数据后的 CRLF
+
+
+def _read_request(sock: socket.socket) -> bytes:
+    """读全一条请求（头 + 体），返回**客户端原样发来的字节**。
+
+    体长只按 Content-Length / 分块编码判定 —— 判不出来就只读到头的结尾，
+    绝不替客户端"猜"一个体长（那会让分析对象变成我们自己造的字节）。
+    """
+    head, rest = _read_head(sock)
+    if not head:
+        return b""
+    raw = head + rest
+    lower = head.lower()
+    if b"chunked" in (head if b"transfer-encoding:" not in lower
+                      else lower.split(b"transfer-encoding:", 1)[1][:32]):
+        while not _chunked_complete(raw[len(head):]):
+            if len(raw) > MAX_REQUEST:
+                break
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            raw += chunk
+        return raw
+    token = _head_field(head, b"content-length:")
+    try:
+        length = int(token or b"0")
+    except ValueError:
+        length = 0
+    while len(raw) - len(head) < length:
+        if len(raw) > MAX_REQUEST:
+            break
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        raw += chunk
+    return raw
+
+
+def _parse_head(head: bytes) -> tuple[str, str, dict[str, str]]:
+    lines = head.split(b"\r\n")
+    parts = lines[0].decode("latin-1").split(" ") if lines else []
+    method = parts[0] if parts else ""
+    target = parts[1] if len(parts) > 1 else ""
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line:
+            continue
+        name, _, value = line.partition(b":")
+        key = name.decode("latin-1").strip().lower()
+        if key:
+            headers[key] = value.decode("latin-1").strip()
+    return method, target, headers
+
+
+def _upstream_of(target: str, headers: dict[str, str]) -> tuple[str, int, str]:
+    """从请求行 / Host 头算出 (上游主机, 端口, origin-form 路径)。
+
+    代理收到的请求行通常是绝对形式（``GET http://host/path HTTP/1.1``）；
+    退化成 origin 形式时用 Host 头定位上游。
+    """
+    if target.startswith("http://"):
+        authority, _, path = target[len("http://"):].partition("/")
+        host, _, port_s = authority.partition(":")
+        return host, int(port_s or 80), ("/" + path if path else "/")
+    host, _, port_s = headers.get("host", "").partition(":")
+    return host, int(port_s or 80), target or "/"
+
+
+def _origin_form(raw: bytes, path: str) -> bytes:
+    """把「代理形式」的请求行改写成「源站形式」，再拿去分析。
+
+    为什么必须做（冒烟时实测到的假阳性）：客户端发给**代理**的请求行是绝对形式
+    （``GET http://host/path HTTP/1.1``），而源站看到的是相对形式（``GET /path HTTP/1.1``）。
+    项目里本来就有 ``request-line-absolute-uri`` 这条已知分歧轴（一侧放行、一侧拒绝），
+    不归一化的话**每一条请求**都会刷出十几条安全级"发现"——那是代理这个部署位置带来的
+    假阳性，不是耦合误差。归一化后分析的是「源站会看到的那份字节」。
+
+    原始字节不丢：记录里保留 ``target``（原始绝对 URL）与 ``raw_b64``（原样字节）。
+    顺带去掉 ``Proxy-Connection``（代理专用的跳步头，源站看不到它）。
+    """
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    lines = head.split(b"\r\n")
+    if len(lines) >= 1:
+        parts = lines[0].split(b" ")
+        if len(parts) == 3:
+            lines[0] = b" ".join([parts[0], path.encode("latin-1"), parts[2]])
+    lines = [lines[0]] + [ln for ln in lines[1:]
+                          if not ln.lower().startswith(b"proxy-connection:")]
+    head = b"\r\n".join(lines)
+    return head + sep + body if sep else head
+
+
+def _skip_reason(method: str, path: str) -> str:
+    if method == "CONNECT":
+        return ""
+    if path.lower().split("?")[0].endswith(STATIC_SUFFIXES):
+        return "静态资源"
+    return ""
+
+
+def _head_and_body(raw: bytes) -> tuple[bytes, bytes]:
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    return (head + b"\r\n\r\n") if sep else raw, (body if sep else b"")
+
+
+def _forward_bytes(raw: bytes) -> bytes:
+    """转发用：把 Connection 换掉（其余原样），让上游读完即关。"""
+    head, body = _head_and_body(raw)
+    lines = [ln for ln in head.split(b"\r\n")
+             if not ln.lower().startswith(b"connection:")
+             and not ln.lower().startswith(b"proxy-connection:")]
+    while lines and lines[-1] == b"":
+        lines.pop()
+    lines.append(b"Connection: close")
+    return b"\r\n".join(lines) + b"\r\n\r\n" + body
+
+
+def _pump(a: socket.socket, b: socket.socket) -> None:
+    """两个方向对拷到任一侧结束（CONNECT 隧道的全部内容）。"""
+
+    def one_way(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    thread = threading.Thread(target=one_way, args=(a, b), daemon=True)
+    thread.start()
+    one_way(b, a)
+    thread.join(timeout=1.0)
+
+
+# --------------------------------------------------------------------- 代理主体
+
+class CaptureProxy:
+    """一条请求进来：先去分析队列，再转发给真实站点（两者互不阻塞）。"""
+
+    def __init__(self, config: Config) -> None:
+        self.cfg = config
+        self.seq = 0
+        self.lock = threading.Lock()
+        self.seen: dict[str, dict] = {}          # case_id → 记录（用于去重计数）
+        self.records: list[dict] = []            # 按到达顺序保留（供前端 / 总结用）
+        self.queue: queue.Queue = queue.Queue(maxsize=QUEUE_SIZE)
+        self.worker = threading.Thread(target=self._consume, daemon=True)
+
+    # ------------------------------------------------------------------ 输出
+
+    def _emit(self, record: dict) -> None:
+        if self.cfg.jsonl is not None:
+            with open(self.cfg.jsonl, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if callable(self.cfg.on_result):
+            try:
+                self.cfg.on_result(record)
+            except Exception:                # noqa: BLE001 —— 回调不许拖垮代理
+                pass
+
+    def _consume(self) -> None:
+        """单个分析线程：代理只负责收，分析在后台排队做 —— 别把连接卡住。"""
+        while not self.cfg.stop.is_set():
+            try:
+                record = self.queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if record is None:
+                return
+            started = time.time()
+            raw = record.pop("raw", b"")
+            try:
+                record["analysis"] = analyze(raw, self.cfg.domains).to_dict()
+            except Exception as exc:         # noqa: BLE001 —— 一条算不动不许停整个捕获
+                record["analysis"] = None
+                record["skip"] = f"分析异常：{type(exc).__name__}: {exc}"
+            record["elapsed_ms"] = round((time.time() - started) * 1000, 1)
+            self._emit(record)
+
+    # ------------------------------------------------------------------ 处理
+
+    def _handle(self, conn: socket.socket, client: tuple) -> None:
+        try:
+            raw = _read_request(conn)
+            if not raw:
+                return
+            method, target, headers = _parse_head(_head_and_body(raw)[0])
+            if method == "CONNECT":
+                self._tunnel(conn, client, target)
+            else:
+                self._record_and_forward(conn, client, method, target, headers, raw)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _tunnel(self, conn: socket.socket, client: tuple, target: str) -> None:
+        """CONNECT：只记一条"未拆"，然后老老实实做双向隧道。"""
+        host, _, port_s = target.partition(":")
+        try:
+            upstream = socket.create_connection((host, int(port_s or 443)),
+                                                timeout=UPSTREAM_TIMEOUT)
+        except OSError:
+            conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+            return
+        conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        with self.lock:
+            self.seq += 1
+            record = {"ts": datetime.now().isoformat(timespec="seconds"),
+                      "seq": self.seq, "client": f"{client[0]}:{client[1]}",
+                      "case_id": None, "method": "CONNECT", "host": host,
+                      "path": "", "target": target, "tunnel": True, "count": 1,
+                      "skip": "HTTPS：CONNECT 隧道直通，不拆包（本期不做 TLS 明文）",
+                      "analysis": None, "elapsed_ms": None}
+            self.records.append(record)
+        self._emit(record)
+        try:
+            _pump(conn, upstream)
+        finally:
+            upstream.close()
+
+    def _record_and_forward(self, conn: socket.socket, client: tuple, method: str,
+                            target: str, headers: dict, raw: bytes) -> None:
+        host, port, path = _upstream_of(target, headers)
+        # 分析对象 = 源站会看到的那份字节（见 _origin_form 的说明）；原始字节留证
+        analyzed = _origin_form(raw, path)
+        case_id = case_id_of(analyzed)
+        evidence = base64.b64encode(raw[:4096]).decode("ascii")
+
+        with self.lock:
+            self.seq += 1
+            previous = self.seen.get(case_id)
+            if previous is not None:
+                previous["count"] += 1
+                record = previous
+                duplicate = True
+            else:
+                record = {"ts": datetime.now().isoformat(timespec="seconds"),
+                          "seq": self.seq, "client": f"{client[0]}:{client[1]}",
+                          "case_id": case_id, "method": method, "target": target,
+                          "host": host, "path": path, "tunnel": False, "count": 1,
+                          "skip": "", "analysis": None, "elapsed_ms": None,
+                          "raw_len": len(raw), "raw_b64": evidence,
+                          "normalized": analyzed != raw}
+                self.seen[case_id] = record
+                self.records.append(record)
+                duplicate = False
+
+        if duplicate:
+            self._emit(dict(record))             # 重复请求：只计数，不重复分析
+        else:
+            reason = "" if self.cfg.analyze_all else _skip_reason(method, path)
+            if reason:
+                record["skip"] = reason
+                self._emit(record)
+            else:
+                record["raw"] = analyzed
+                try:
+                    self.queue.put_nowait(record)
+                except queue.Full:
+                    record.pop("raw", None)
+                    record["skip"] = "分析队列已满（代理仍在正常转发）"
+                    self._emit(record)
+
+        # 转发：只加 Connection: close，其余原样
+        try:
+            with socket.create_connection((host, port), timeout=UPSTREAM_TIMEOUT) as up:
+                up.sendall(_forward_bytes(raw))
+                while True:
+                    chunk = up.recv(65536)
+                    if not chunk:
+                        break
+                    conn.sendall(chunk)
+        except OSError:
+            try:
+                conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+
+    # ------------------------------------------------------------------ 生命周期
+
+    def serve_forever(self) -> None:
+        self.worker.start()
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((self.cfg.host, self.cfg.port))
+        server.listen(128)
+        server.settimeout(0.3)
+        print(f"捕获代理已就绪：{self.cfg.host}:{self.cfg.port}"
+              f"（HTTP 明文；HTTPS 只做隧道直通）")
+        print("把浏览器 / 客户端 / 系统代理指向它即可；Ctrl+C 停止。"
+              "仅用于你自有或已获授权的目标。")
+        if self.cfg.jsonl:
+            print(f"记录写入：{self.cfg.jsonl}", flush=True)
+        try:
+            while not self.cfg.stop.is_set():
+                try:
+                    conn, client = server.accept()
+                except socket.timeout:
+                    continue
+                threading.Thread(target=self._handle, args=(conn, client),
+                                 daemon=True).start()
+        finally:
+            self.cfg.stop.set()
+            try:
+                self.queue.put_nowait(None)
+            except queue.Full:
+                pass
+            server.close()
+
+    # ------------------------------------------------------------------ 小结
+
+    def summary(self) -> dict:
+        analyzed = [r for r in self.records if r.get("analysis")]
+        security = [r for r in analyzed if r["analysis"]["security"]]
+        return {"requests": len(self.records),
+                "analyzed": len(analyzed),
+                "skipped": len([r for r in self.records if r.get("skip")]),
+                "tunnels": len([r for r in self.records if r.get("tunnel")]),
+                "security_requests": len(security),
+                "divergences": sum(r["analysis"]["divergences"] for r in analyzed)}
+
+
+def summary_line(parts: dict) -> str:
+    """一行小结（Ctrl+C 收工时打印；测试也用它）。"""
+    return (f"共看到 {parts['requests']} 条请求："
+            f"分析 {parts['analyzed']} 条 · 跳过 {parts['skipped']} 条 · "
+            f"HTTPS 隧道 {parts['tunnels']} 条 · "
+            f"分歧 {parts['divergences']} 处 · 安全级 {parts['security_requests']} 条请求")
+
+
+def serve(config: Config) -> int:
+    proxy = CaptureProxy(config)
+    try:
+        proxy.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    print()
+    print(summary_line(proxy.summary()))
+    return 0
+
+
+__all__ = ["Config", "CaptureProxy", "serve", "summary_line", "STATIC_SUFFIXES"]

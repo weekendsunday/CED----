@@ -44,6 +44,7 @@ python main.py --probe                 # 同时起探针服务（接真实产品
 python -m ced regression               # 已知案例反验证
 python -m ced probe 请求文件            # 探测一份原始字节文件
 python -m ced probe 请求文件 --domain url-norm   # 指定领域（默认分帧；共 5 个）
+python -m ced capture --port 18081     # 自动捕获：浏览器/系统代理指向它，请求自动进差分
 python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 ```
 
@@ -73,8 +74,8 @@ python -m ced scan --mode axis --limit 60 --out report.md --db ced.db
 | 真实 Docker 链路 | 实机跑通两个真实产品：`nginx:1.25.5`（4 用例 / 拒绝 9 条 / 0 安全级）与 `nginx → gunicorn` 第二档（12 用例 / 拒绝 91 条 / 55 分歧 / 1 安全级）。换第三种产品（**haproxy 2.9**）**零代码改动**即可观测，并抓到一条 security 级发现（重复 `Host` 头被合并 → 转发字节数少 17 字节）。实测对照：**同一份字节，nginx 对 CL+TE 直接 400、把 chunked 解成 CL，haproxy 却按 TE 转发、原样保留 chunked** —— 明细见 `docker/README.md` |
 | 报告可读性 | 按「同一对实现 + 同一分歧类型」归并：分帧 13→**3** · 路径 82→**14** · Host 90→**6** · 查询串 100→**15** · 编码 82→**9**（发现 → 类；冗余最高 **15.0×**） |
 | 已知案例反验证 | **47/47 通过**（期望值全部独立手写，来自 RFC / 公开先例，不是工具输出） |
-| 自动化测试 | **196 项全绿**（引擎 19 / 探针协议 2 / 链路端到端 8 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9 / Host 12 / 查询串 11 / 编码 11 / 验证层 20 / 发现归并 9 / 探针领域化 7） |
-| 代码量 | 源码 75 文件 12161 行；测试 18 文件 3848 行 |
+| 自动化测试 | **205 项全绿**（引擎 19 / 探针协议 2 / 链路端到端 8 / 模型提案层 36 / 扫描控制台 16 / 场景与 PoC 10 / 指标与热力图 11 / 闭环 agent 15 / 路径归一化 9 / Host 12 / 查询串 11 / 编码 11 / 验证层 20 / 发现归并 9 / 探针领域化 7 / 自动捕获 9） |
+| 代码量 | 源码 78 文件 12845 行；测试 19 文件 4146 行 |
 | 第三方依赖 | **0** —— 连模型调用（`urllib`）与前端事件流（手写 SSE）都是标准库 |
 
 > 数字一律从代码里数出来再写（`python main.py --check`、`python -m ced impls`、
@@ -253,6 +254,7 @@ flowchart TD
 | 资产发现 / 端口扫描 / 指纹 / CVE 匹配 | 完全不做 |
 | 读源码做数据流分析 | 全程黑盒，只读字节流 |
 | HTTP/2 / HTTP/3 | 只有 HTTP/1.1 |
+| HTTPS 明文 | 不做 TLS 拆解：自动捕获只做 `CONNECT` 隧道直通（看不到 HTTPS 请求内容） |
 
 **用它的前提**（不满足就跑不出东西）：
 
@@ -292,6 +294,7 @@ flowchart TD
 | 扫描任务 | `ced/scan/` | 任务状态机、后台执行、事件流、中止时保留已完成部分 |
 | 控制台 | `ced/web/` | 零依赖 `ThreadingHTTPServer` + 单页前端；模型文字与确定性证据**分栏**渲染 |
 | 验证层 | `ced/intake/` | 外部发现（nuclei / Burp / HAR / curl / 清单）→ 假设 → 三态验证（已证实 / 未证实 / 证不了） |
+| 自动捕获 | `ced/capture/` | 本机 HTTP 代理：收到的请求**自动**进同一个 oracle（一条请求扇出 5 个领域、同字节去重计数、静态资源默认跳过）；HTTPS 只做 `CONNECT` 直通不拆包 |
 | 真实链路 | `docker/` + `ced/probe/front.py` | Docker compose（**本机已装 Docker Desktop 4.93 并实机跑通**，见 `docker/README.md`）与无 Docker 的替身前置 |
 
 新增一个领域 = 实现 `DomainAdapter` 协议并在注册表登记，**引擎一行都不用改**。

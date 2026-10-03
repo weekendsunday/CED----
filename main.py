@@ -43,6 +43,7 @@ TEST_FILES = (
     "ced/tests/test_intake.py",
     "ced/tests/test_cluster.py",
     "ced/tests/test_probe_domains.py",
+    "ced/tests/test_capture.py",
 )
 
 

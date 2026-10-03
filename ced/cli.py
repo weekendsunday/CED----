@@ -550,6 +550,45 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_capture(args: argparse.Namespace) -> int:
+    """自动捕获：把本机真实请求**自动**送进差分 oracle。
+
+    只做本机 HTTP 代理 —— 明文 HTTP 把请求收全，HTTPS 的 `CONNECT` 只做隧道直通：
+    不装驱动、不要管理员、不碰 TLS 明文。浏览器 / 客户端 / 系统代理指向本端口即可，
+    不用手动导出抓包、也不用粘贴请求。
+    """
+    from .capture import Config, serve
+
+    def show(record: dict) -> None:
+        stamp = str(record.get("ts", ""))[11:]
+        label = (f"{record.get('method', '')} "
+                 f"{record.get('host', '')}{record.get('path') or ''}")
+        head = f"[{stamp}] #{record.get('seq', 0):<4} {label}"
+        if record.get("tunnel"):
+            print(f"{head:<72} {record.get('skip') or '未拆'}", flush=True)
+            return
+        times = f" ×{record['count']}" if record.get("count", 1) > 1 else ""
+        analysis = record.get("analysis")
+        if not analysis:
+            print(f"{head:<72} {record.get('skip') or '（未分析）'}", flush=True)
+            return
+        tag = {"security": "!! 安全级", "unknown": "疑点"}.get(analysis["level"], "一致")
+        per = "  ".join(f"{name}:{row['divergences']}"
+                        for name, row in analysis["domains"].items()
+                        if row["divergences"])
+        print(f"{head:<72}{times} 分歧 {analysis['divergences']:<3} {tag:<7} "
+              f"{record.get('elapsed_ms')}ms  {per}", flush=True)
+        top = analysis.get("top")
+        if top and analysis["level"] == "security":
+            print(f"{'':<72} └ {top['domain']}｜{top['left']} ↔ {top['right']}｜"
+                  f"{top['kind']} {top['cwe']}｜{top['reason'][:44]}", flush=True)
+
+    return serve(Config(host=args.host, port=args.port,
+                        jsonl=Path(args.jsonl) if args.jsonl else None,
+                        domains=args.domain or None,
+                        analyze_all=args.analyze_all, on_result=show))
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     """验证层：**做扫描器的裁判**。
 
@@ -706,6 +745,17 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--front-mode", default="pass",
                    help="pass | rewrite_cl | drop | 参照实现策略名（如 ref-te-first）")
     v.set_defaults(func=_cmd_serve)
+
+    cap = sub.add_parser("capture", help="自动捕获：本机代理，收到的请求自动进差分 oracle")
+    cap.add_argument("--host", default="127.0.0.1")
+    cap.add_argument("--port", type=int, default=18081,
+                     help="代理端口（别用 8080：Windows 常保留该端口）")
+    cap.add_argument("--jsonl", default=None, help="把每条记录追加写到这个文件")
+    cap.add_argument("--domain", action="append", default=None, choices=sorted(ADAPTERS),
+                     help="只跑这些领域（可重复；缺省 = 全部 5 个）")
+    cap.add_argument("--analyze-all", action="store_true",
+                     help="连静态资源也分析（默认跳过 .css/.js/图片等）")
+    cap.set_defaults(func=_cmd_capture)
 
     r = sub.add_parser("regression", help="已知案例反验证（平台有效性自证，改判定后必跑）")
     r.set_defaults(func=_cmd_regression)

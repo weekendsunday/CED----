@@ -240,6 +240,19 @@ class TestCaptureProxy(unittest.TestCase):
         self.assertIsNone(record["analysis"])
         self.assertIn("不拆包", record["skip"])
 
+    def test_unreachable_connect_is_still_recorded(self):
+        """CONNECT 到连不上的上游：也要**留下记录**（"我看到了什么"必须如实记），并回 502。"""
+        with socket.create_connection(("127.0.0.1", self.harness.port), timeout=10) as sock:
+            sock.sendall(b"CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n")
+            sock.settimeout(5)
+            head = sock.recv(4096)
+        self.assertIn(b"502", head)
+        self.assertTrue(_wait(lambda: len(self.harness.seen) >= 1), "连不上就不记了？")
+        record = self.harness.seen[-1]
+        self.assertTrue(record["tunnel"])
+        self.assertIn("不可达", record["skip"])
+        self.assertIn("127.0.0.1:1", record["target"])
+
     def test_same_bytes_are_analyzed_once(self):
         """同一份字节再来一次 → 只计数，不重复分析。"""
         request = (b"GET /dup HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nConnection: close\r\n\r\n"

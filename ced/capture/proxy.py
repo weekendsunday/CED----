@@ -326,25 +326,37 @@ class CaptureProxy:
                 pass
 
     def _tunnel(self, conn: socket.socket, client: tuple, target: str) -> None:
-        """CONNECT：只记一条"未拆"，然后老老实实做双向隧道。"""
+        """CONNECT：只记一条"未拆"，然后老老实实做双向隧道。
+
+        上游连不上也要**先记下来**再回 502 —— 探针/web 的职责是"如实记录我看到了什么"，
+        连不上的那条 CONNECT 同样是证据（说明客户端试过访问那个站点）。
+        """
         host, _, port_s = target.partition(":")
+        note = "HTTPS：CONNECT 隧道直通，不拆包（本期不做 TLS 明文）"
+        upstream = None
         try:
             upstream = socket.create_connection((host, int(port_s or 443)),
                                                 timeout=UPSTREAM_TIMEOUT)
-        except OSError:
-            conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
-            return
-        conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        except OSError as exc:
+            note = f"HTTPS：CONNECT 隧道（上游 {target} 不可达：{exc}）"
+
         with self.lock:
             self.seq += 1
             record = {"ts": datetime.now().isoformat(timespec="seconds"),
                       "seq": self.seq, "client": f"{client[0]}:{client[1]}",
                       "case_id": None, "method": "CONNECT", "host": host,
                       "path": "", "target": target, "tunnel": True, "count": 1,
-                      "skip": "HTTPS：CONNECT 隧道直通，不拆包（本期不做 TLS 明文）",
-                      "analysis": None, "elapsed_ms": None}
+                      "skip": note, "analysis": None, "elapsed_ms": None}
             self.records.append(record)
         self._emit(record)
+
+        if upstream is None:
+            try:
+                conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            return
+        conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         try:
             _pump(conn, upstream)
         finally:

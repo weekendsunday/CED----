@@ -531,7 +531,13 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
     <div class="card">
       <div class="card-hd"><h2>发现</h2><span class="hint">点一条看证据；安全级的会带端到端 PoC</span></div>
       <div class="split">
-        <div><div class="note" id="dt-count">0 条</div><div class="evlist" id="dt-list">
+        <div><div class="toolbar">
+          <select class="select" id="dt-filter">
+            <option value="all">全部</option>
+            <option value="flagged">只看安全级 / 已证实</option>
+            <option value="uncertain">只看疑点 / 未证实 / 证不了</option>
+          </select></div>
+          <div class="note" id="dt-count">0 条</div><div class="evlist" id="dt-list">
           <div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div></div></div>
         <div><div id="dt-evidence" class="note">← 左边点一条</div></div>
       </div>
@@ -736,6 +742,15 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
         <span class="hint">同一份字节只分析一次；点一行看证据、一键出最小复现样本与 PoC</span></div>
       <div class="split">
         <div>
+          <div class="toolbar">
+            <select class="select" id="cap-filter">
+              <option value="all">全部</option>
+              <option value="security">只看安全级</option>
+              <option value="divergent">只看有分歧</option>
+              <option value="skipped">只看跳过 / 隧道</option>
+            </select>
+            <input class="input" id="cap-search" type="text" placeholder="按 host / 路径 / 方法 过滤">
+          </div>
           <div class="note" id="cap-count">0 条</div>
           <div class="evlist" id="cap-list">
             <div class="empty"><b>还没有请求</b>点上面的「开始捕获」，再把代理指过来</div>
@@ -1790,15 +1805,26 @@ onTabShown('scan');
     return f.domain ? (f.domain + '｜' + f.left + ' ↔ ' + f.right + '｜' + (f.kind || ''))
                     : (f.target || '');
   }
+  function visibleFindings(){
+    const mode = el('dt-filter').value;
+    if (mode === 'all') return findings;
+    const wanted = mode === 'flagged' ? ['security', 'confirmed']
+                                      : ['unknown', 'unverifiable', 'refuted'];
+    return findings.filter(f => wanted.indexOf(f.level || f.verdict) >= 0);
+  }
   function renderFindings(){
-    el('dt-count').textContent = findings.length + ' 条';
+    const shown = visibleFindings();
+    el('dt-count').textContent = findings.length
+      ? (shown.length + ' / ' + findings.length + ' 条') : '0 条';
     const box = el('dt-list');
-    if (!findings.length){
-      box.innerHTML = '<div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div>';
+    if (!shown.length){
+      box.innerHTML = findings.length
+        ? '<div class="empty"><b>当前筛选下没有结果</b>换个筛选条件</div>'
+        : '<div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div>';
       return;
     }
-    box.innerHTML = findings.map((f, i) =>
-      `<div class="evitem" data-i="${i}"><div class="id">${esc(titleOf(f)).slice(0, 46)}</div>
+    box.innerHTML = shown.map(f =>
+      `<div class="evitem" data-i="${findings.indexOf(f)}"><div class="id">${esc(titleOf(f)).slice(0, 46)}</div>
         <div class="meta">${badge(f)}　${esc(String(f.kind || f.detail || '')).slice(0, 44)}</div></div>`
     ).join('');
     box.querySelectorAll('.evitem').forEach(node => node.onclick = () => {
@@ -1880,6 +1906,7 @@ onTabShown('scan');
     }
   }
   el('dt-go').onclick = go;
+  el('dt-filter').onchange = renderFindings;
   el('dt-file-btn').onclick = () => el('dt-file').click();
   // textarea 的 value 会被浏览器规范化（CR 全被吃掉）—— 所以原始字节**另存一份**：
   // 文件按字节读进来之后，送检的是这份 exact，而不是文本框里的文本。
@@ -2070,11 +2097,23 @@ onTabShown('scan');
       <div class="meta">${verdictBadge(r)}　${extra}</div>
     </div>`;
   }
+  function matchesFilter(r){
+    const mode = (box('cap-filter') || {}).value || 'all';
+    if (mode === 'security' && !(r.analysis && r.analysis.security)) return false;
+    if (mode === 'divergent' && !(r.analysis && r.analysis.divergences)) return false;
+    if (mode === 'skipped' && !(r.skip || r.tunnel)) return false;
+    const query = ((box('cap-search') || {}).value || '').trim().toLowerCase();
+    if (!query) return true;
+    return [r.method, r.host, r.path, r.target].map(
+      v => String(v == null ? '' : v).toLowerCase()).join(' ').indexOf(query) >= 0;
+  }
   function renderList(){
     const list = box('cap-list');
-    const view = rows.slice(-200);
+    const hits = rows.filter(matchesFilter);
+    const view = hits.slice(-200);
     list.innerHTML = view.map(rowHtml).join('') ||
-      '<div class="empty"><b>还没有请求</b>把代理指过来试试</div>';
+      (rows.length ? '<div class="empty"><b>当前筛选下没有请求</b>换个条件试试</div>'
+                   : '<div class="empty"><b>还没有请求</b>把代理指过来试试</div>');
     list.querySelectorAll('.evitem').forEach(el => {
       el.onclick = () => {
         const found = rows.find(x => (x.case_id || '') === el.dataset.case);
@@ -2085,8 +2124,9 @@ onTabShown('scan');
         detail(found.case_id);
       };
     });
-    box('cap-count').textContent = rows.length + ' 条'
-      + (rows.length > view.length ? '（只显示最近 200 条；完整记录在 JSONL 里）' : '');
+    box('cap-count').textContent =
+      (hits.length === rows.length ? '' : hits.length + ' / ') + rows.length + ' 条'
+      + (hits.length > view.length ? '（只显示最近 200 条；完整记录在 JSONL 里）' : '');
   }
   function evHtml(d){
     let h = `<div class="kv"><span class="k">请求</span>${esc(d.method)} ${esc(d.host)}${esc(d.path || '')}</div>`;
@@ -2207,6 +2247,8 @@ onTabShown('scan');
   }
   box('cap-go').onclick = go;
   box('cap-stop').onclick = stop;
+  box('cap-filter').onchange = renderList;
+  box('cap-search').oninput = renderList;
   (async function sync(){
     try {
       const doms = await (await fetch('/api/domains')).json();

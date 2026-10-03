@@ -352,20 +352,30 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "settings": app_settings.public_view(saved)})
 
     def _capture_start(self, body: dict) -> None:
-        """起自动捕获。端口被占 / 领域写错都要**当场**说清楚，不留给后台线程。"""
+        """起自动捕获。端口被占 / 领域写错都要**当场**说清楚，不留给后台线程。
+
+        **请求里没给的字段一律回落到「设置」里保存的默认值** —— 否则设置页就是个摆设
+        （改了端口、写了记录文件，起捕获时却不用它）。
+        """
+        saved = app_settings.load()["capture"]
         try:
-            port = int(body.get("port") or 18081)
+            port = int(body.get("port") or saved.get("port") or 18081)
         except (TypeError, ValueError):
             return self._json({"error": "端口必须是数字"}, 400)
-        domains = body.get("domains") or None
+        domains = body.get("domains")
+        if domains in (None, [], ""):
+            domains = list(saved.get("domains") or [])
         if isinstance(domains, str):
             domains = [item.strip() for item in domains.split(",") if item.strip()]
-        unknown = [item for item in (domains or []) if item not in ADAPTERS]
+        unknown = [item for item in domains if item not in ADAPTERS]
         if unknown:
             return self._json({"error": f"未知领域：{', '.join(unknown)}"}, 400)
-        result = CAPTURE.start(port=port, domains=domains,
-                               analyze_all=bool(body.get("analyze_all")),
-                               jsonl=(body.get("jsonl") or None))
+        analyze_all = body.get("analyze_all")
+        if analyze_all is None:
+            analyze_all = bool(saved.get("analyze_all"))
+        jsonl = body.get("jsonl") or saved.get("jsonl") or None
+        result = CAPTURE.start(port=port, domains=domains or None,
+                               analyze_all=bool(analyze_all), jsonl=jsonl)
         return self._json(result, 200 if result.get("ok") else 400)
 
     # ----------------------------------------------------------------- 业务

@@ -349,12 +349,20 @@ class TestCaptureWebApi(unittest.TestCase):
 
     def setUp(self) -> None:
         import ced.capture.web as capture_web
+        from ced import settings as app_settings
 
         from ced.web.server import CAPTURE
 
         CAPTURE.stop()                      # 每个用例从干净状态开始
         self.addCleanup(CAPTURE.stop)
         self.port = _free_port()
+        # 设置文件也要隔离：起捕获现在会回落「设置」里的默认值，
+        # 读到开发机上那份真实配置就会让用例依赖环境。
+        scratch_settings = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(scratch_settings.cleanup)
+        self._old_settings = app_settings.SETTINGS_PATH
+        app_settings.SETTINGS_PATH = Path(scratch_settings.name) / "ced-settings.json"
+        self.addCleanup(lambda: setattr(app_settings, "SETTINGS_PATH", self._old_settings))
         # PoC 落到临时目录，别污染仓库的 results/pocs
         scratch = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(scratch.cleanup)

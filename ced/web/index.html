@@ -465,6 +465,26 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 .settings-grid .input,.settings-grid .select{width:100%;margin-top:4px}
 .settings-grid .form-row-3 label{margin:0}
 @media(max-width:900px){.settings-grid{grid-template-columns:1fr}}
+/* 原始字节是等宽的；拖入时给明确反馈 */
+.paste{font-family:ui-monospace,Consolas,Menlo,monospace;line-height:1.5}
+.paste.drop-on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 3px var(--accent-soft)}
+/* 链路状态条 + 节点状态点（进行中脉冲） */
+.dag-bar{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+.dag-bar .state{font-weight:600}
+.dag-bar .state.running{color:var(--accent)}
+.dag-bar .state.done{color:var(--good)}
+.dag-bar .state.error{color:var(--bad)}
+.dag .node .t{display:flex;align-items:center;gap:6px}
+.dag .dot{flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--line-2)}
+.dag .node.running .dot{background:var(--accent);animation:omp-pulse 1s ease-in-out infinite}
+.dag .node.done .dot{background:var(--good)}
+@keyframes omp-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* 分级计数徽章 */
+.levels{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.levels .lv{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--ink-2);background:var(--surface)}
+.levels .lv.bad{border-color:var(--bad-line);background:var(--bad-soft);color:var(--bad)}
+.levels .lv.warn{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn)}
+.levels .lv.good{border-color:var(--good-line);background:var(--good-soft);color:var(--good)}
 </style>
 </head>
 <body>
@@ -533,7 +553,8 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
       <div class="toolbar">
         <select class="select" id="cap-domain"><option value="">全部 5 个领域</option></select>
         <label class="check"><input type="checkbox" id="cap-all"> <span>连静态资源也分析</span></label>
-        <span class="note">同一份字节只分析一次；点一行看证据、一键出最小复现样本与 PoC</span>
+        <button class="btn btn-ghost" id="cap-save-default">把当前捕获设置存为默认</button>
+        <span class="note" id="cap-default-hint">默认值存在「设置」页；改了上面的端口/领域/开关，点这个按钮就写进去</span>
       </div>
       <div id="cap-err"></div>
       <div class="statcards" id="cap-stats"></div>
@@ -561,13 +582,16 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 
     <div class="card">
       <div class="card-hd"><h2>自动链路</h2><span class="hint">实时显示它跑到哪一步（绿=完成，蓝=进行中）</span></div>
+      <div class="dag-bar"><span class="state" id="dt-chain">待运行</span>
+        <span class="note" id="dt-elapsed"></span></div>
       <div class="dag" id="dt-dag"></div>
       <div class="note" id="dt-dag-detail">—</div>
     </div>
 
     <div class="card">
       <div class="card-hd"><h2>实时报告</h2><span class="hint">边跑边吐，不用等跑完</span>
-        <button class="btn btn-ghost" id="dt-copy">复制报告</button></div>
+        <button class="btn btn-ghost" id="dt-copy">复制报告</button>
+        <button class="btn btn-ghost" id="dt-download">下载 .md</button></div>
       <pre class="report" id="dt-report">（还没开始）</pre>
     </div>
 
@@ -580,6 +604,7 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
             <option value="flagged">只看安全级 / 已证实</option>
             <option value="uncertain">只看疑点 / 未证实 / 证不了</option>
           </select></div>
+          <div class="levels" id="dt-levels"></div>
           <div class="note" id="dt-count">0 条</div><div class="evlist" id="dt-list">
           <div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div></div></div>
         <div><div id="dt-evidence" class="note">← 左边点一条</div></div>
@@ -1768,8 +1793,29 @@ onTabShown('scan');
   function initDag(){
     el('dt-dag').innerHTML = NODES.map((pair, i) =>
       (i ? '<span class="arrow">→</span>' : '') +
-      `<div class="node" data-node="${pair[0]}"><div class="t">${esc(pair[1])}</div><div class="s">待运行</div></div>`
+      `<div class="node" data-node="${pair[0]}"><div class="t"><span class="dot"></span>${esc(pair[1])}</div><div class="s">待运行</div></div>`
     ).join('');
+  }
+  let chainStart = 0, ticker = null;
+  function setChain(state, text){
+    const box = el('dt-chain');
+    box.className = 'state ' + state;
+    box.textContent = text;
+  }
+  function startTicker(){
+    chainStart = Date.now();
+    if (ticker) clearInterval(ticker);
+    ticker = setInterval(() => {
+      el('dt-elapsed').textContent = '已用 ' + ((Date.now() - chainStart) / 1000).toFixed(1) + ' 秒';
+    }, 200);
+  }
+  function stopTicker(){
+    if (ticker){ clearInterval(ticker); ticker = null; }
+    if (chainStart){
+      const ms = Date.now() - chainStart;
+      el('dt-elapsed').textContent = '用时 '
+        + (ms < 1000 ? ms + ' 毫秒' : (ms / 1000).toFixed(1) + ' 秒');
+    }
   }
   function setNode(node, state, detail){
     const box = el('dt-dag').querySelector(`.node[data-node="${node}"]`);
@@ -1803,7 +1849,21 @@ onTabShown('scan');
                                       : ['unknown', 'unverifiable', 'refuted'];
     return findings.filter(f => wanted.indexOf(f.level || f.verdict) >= 0);
   }
+  function renderLevels(){
+    const counts = {};
+    findings.forEach(f => {
+      const key = f.level || f.verdict || '—';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const label = {security:'安全级', unknown:'疑点', compatibility:'兼容性',
+                   confirmed:'已证实', refuted:'未证实', unverifiable:'证不了'};
+    const cls = {security:'bad', confirmed:'bad', unknown:'warn', unverifiable:'warn',
+                 refuted:'good', compatibility:''};
+    el('dt-levels').innerHTML = Object.keys(counts).map(key =>
+      `<span class="lv ${cls[key] || ''}">${esc(label[key] || key)} ${counts[key]}</span>`).join('');
+  }
   function renderFindings(){
+    renderLevels();
     const shown = visibleFindings();
     el('dt-count').textContent = findings.length
       ? (shown.length + ' / ' + findings.length + ' 条') : '0 条';
@@ -1859,10 +1919,12 @@ onTabShown('scan');
     } else if (ev.type === 'finding'){
       findings.push(ev); renderFindings();
     } else if (ev.type === 'done'){
-      closeStream(); renderFindings();
+      closeStream(); renderFindings(); setChain('done', '已完成');
+      stopTicker();
       if (ev.result && ev.result.report) lastReport = ev.result.report;
     } else if (ev.type === 'error'){
       el('dt-err').innerHTML = '<div class="err">' + esc(ev.error) + '</div>';
+      setChain('error', '失败'); stopTicker();
       closeStream();
     }
   }
@@ -1877,6 +1939,7 @@ onTabShown('scan');
     el('dt-report').textContent = ''; el('dt-list').innerHTML = '';
     el('dt-evidence').className = 'note'; el('dt-evidence').textContent = '← 左边点一条';
     initDag(); renderFindings();
+    setChain('running', '运行中'); el('dt-elapsed').textContent = ''; startTicker();
     const body = {text: text};
     const domain = el('dt-domain').value;
     if (domain) body.domains = [domain];
@@ -1939,6 +2002,41 @@ onTabShown('scan');
       : '';
   }
   el('dt-text').oninput = () => { exact = null; checkMangled(); };
+
+  /* 拖文件到输入框（卡片上也写了"粘/拖"）：按字节读入，进 exact 缓冲 */
+  const ta = el('dt-text');
+  ['dragenter','dragover'].forEach(name => ta.addEventListener(name, ev => {
+    ev.preventDefault(); ta.classList.add('drop-on');
+  }));
+  ['dragleave','drop'].forEach(name => ta.addEventListener(name, ev => {
+    ev.preventDefault(); ta.classList.remove('drop-on');
+  }));
+  ta.addEventListener('drop', ev => {
+    const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      exact = bytes;
+      ta.value = latin1(bytes);
+      el('dt-hint').textContent = '已拖入 ' + bytes.length + ' 字节：' + file.name + '（按字节送检）';
+      checkMangled();
+    };
+    reader.readAsArrayBuffer(file);
+  });
+  ta.addEventListener('keydown', ev => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter'){ ev.preventDefault(); go(); }
+  });
+  el('dt-download').onclick = () => {
+    const text = lastReport || lines.join('\n');
+    if (!text) return;
+    const url = URL.createObjectURL(new Blob([text], {type: 'text/markdown;charset=utf-8'}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ced-report.md';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
 
   /* 载入示例：samples/ 下的样本按字节取回，同样进 exact 缓冲（原始请求要保真） */
   (async function fillSamples(){
@@ -2008,7 +2106,38 @@ onTabShown('scan');
     el('set-poc-dir').value = s.paths.poc_dir;
     el('set-report-dir').value = s.paths.report_dir;
     el('set-state').textContent = '配置文件：' + s.path;
+    // 捕获的默认值同步到检测页那几个控件（捕获在跑时不动，别把现场值盖了）
+    if (el('cap-state').textContent.indexOf('运行中') !== 0){
+      el('cap-port').value = s.capture.port;
+      el('cap-all').checked = !!s.capture.analyze_all;
+      const doms = s.capture.domains || [];
+      el('cap-domain').value = doms.length === 1 ? doms[0] : '';
+    }
+    el('cap-default-hint').textContent = '默认值：端口 ' + s.capture.port
+      + '，领域 ' + ((s.capture.domains || []).join(' / ') || '全部 5 个')
+      + '，静态资源 ' + (s.capture.analyze_all ? '也分析' : '跳过')
+      + (s.capture.jsonl ? ('，记录写 ' + s.capture.jsonl) : '，不写记录文件');
   }
+  el('cap-save-default').onclick = async () => {
+    const dom = el('cap-domain').value;
+    const payload = {capture: {port: parseInt(el('cap-port').value, 10) || 18081,
+                               analyze_all: el('cap-all').checked,
+                               domains: dom ? [dom] : []}};
+    try {
+      const resp = await fetch('/api/settings', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const info = await resp.json();
+      if (info.error){
+        el('cap-err').innerHTML = '<div class="err">' + esc(info.error) + '</div>';
+        return;
+      }
+      fillSettings(info.settings);
+      el('cap-err').innerHTML = '<div class="alert alert-info">已存为默认（端口 '
+        + payload.capture.port + '）。下次开页、或从服务端起捕获都会用它。</div>';
+    } catch (err){
+      el('cap-err').innerHTML = '<div class="err">保存失败：' + esc(err) + '</div>';
+    }
+  };
   async function loadSettings(){
     try { fillSettings(await (await fetch('/api/settings')).json()); }
     catch (e) { el('set-err').innerHTML = '<div class="err">读取设置失败：' + esc(e) + '</div>'; }

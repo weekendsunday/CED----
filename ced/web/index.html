@@ -448,7 +448,6 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 </style>
 <style>
 /* ===== 单一入口：DAG / 实时报告 / 设置（新增，不动既有样式）===== */
-.toolbar .cap-port{flex:0 0 86px;width:86px;min-width:0}
 .dag{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
 .dag .node{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--surface);min-width:126px;transition:border-color .15s,background .15s}
 .dag .node .t{font-size:13px;font-weight:600}
@@ -484,6 +483,23 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 /* 分级计数徽章 */
 .levels{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 8px}
 .levels .lv{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--ink-2);background:var(--surface)}
+/* ===== 捕获设置小窗（原生 dialog）===== */
+dialog.sheet{border:1px solid var(--line);border-radius:14px;padding:0;width:min(560px,92vw);
+  background:var(--surface);color:var(--ink);box-shadow:0 20px 60px rgba(15,23,42,.22)}
+dialog.sheet::backdrop{background:rgba(15,23,42,.34)}
+.sheet-hd{display:flex;align-items:center;gap:8px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.sheet-hd h3{margin:0;font-size:var(--fs-3);font-weight:600}
+.sheet-hd .x{margin-left:auto;border:0;background:none;font-size:17px;line-height:1;color:var(--ink-3);
+  cursor:pointer;padding:4px 7px;border-radius:6px}
+.sheet-hd .x:hover{background:var(--surface-2);color:var(--ink)}
+.sheet-bd{padding:18px 20px;display:flex;flex-direction:column;gap:14px}
+.sheet-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:center}
+.sheet-row>.k{color:var(--ink-3);font-size:var(--fs-2)}
+.sheet-row .check{padding-bottom:0}
+.sheet-ft{display:flex;gap:8px;align-items:center;padding:14px 20px;border-top:1px solid var(--line);
+  background:var(--surface-2);border-radius:0 0 13px 13px}
+.sheet-ft .note{margin-right:auto}
+#cap-summary{flex:1 1 260px}
 .levels .lv.bad{border-color:var(--bad-line);background:var(--bad-soft);color:var(--bad)}
 .levels .lv.warn{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn)}
 .levels .lv.good{border-color:var(--good-line);background:var(--good-soft);color:var(--good)}
@@ -533,11 +549,11 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
       </div>
       <div class="toolbar">
         <span class="note">或让请求自己流进来：</span>
-        <input class="input cap-port" id="cap-port" type="text" value="18081"
-               title="自动捕获代理端口（别用 8080：Windows 常保留该端口）">
         <button class="btn btn-ghost" id="cap-go">开始自动捕获</button>
         <button class="btn btn-danger" id="cap-stop" disabled>停止</button>
         <span class="note" id="cap-state">未启动</span>
+        <button class="btn btn-ghost cap-settings" id="cap-open">捕获设置…</button>
+        <span class="note" id="cap-summary">端口 18081 · 全部 5 个领域 · 跳过静态资源 · 不写记录文件</span>
       </div>
       <div class="toolbar"><span class="note" id="dt-hint">识别与编排全自动；判定由确定性内核给出</span></div>
       </div>
@@ -546,40 +562,6 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
       <div class="note">原始请求要<b>字节保真</b>：用「选择文件」读抓包导出的 .bin/.txt（按字节读入），
         或直接用下面的「自动捕获」；<b>粘贴框里的 CRLF 会被浏览器规范化成 LF</b>（粘文本类输入如
         nuclei / curl / URL 清单则无妨）。文件按字节读入 —— 含中文的文本类文件在框里显示可能乱码，不影响分析。</div>
-    </div>
-
-    <div class="card">
-      <div class="card-hd"><h2>自动捕获</h2>
-        <span class="hint">把浏览器 / 客户端 / 系统代理指向上面那个端口，请求<b>自动</b>进来跑差分 ——
-          HTTPS 只做 <code>CONNECT</code> 直通不拆包；仅用于你自有或已获授权的目标</span></div>
-      <div class="toolbar">
-        <select class="select" id="cap-domain"><option value="">全部 5 个领域</option></select>
-        <label class="check"><input type="checkbox" id="cap-all"> <span>连静态资源也分析</span></label>
-        <button class="btn btn-ghost" id="cap-save-default">把当前捕获设置存为默认</button>
-        <span class="note" id="cap-default-hint">默认值存在「设置」页；改了上面的端口/领域/开关，点这个按钮就写进去</span>
-      </div>
-      <div id="cap-err"></div>
-      <div class="statcards" id="cap-stats"></div>
-      <div class="split">
-        <div>
-          <div class="toolbar">
-            <select class="select" id="cap-filter">
-              <option value="all">全部</option>
-              <option value="security">只看安全级</option>
-              <option value="divergent">只看有分歧</option>
-              <option value="skipped">只看跳过 / 隧道</option>
-            </select>
-            <input class="input" id="cap-search" type="text" placeholder="按 host / 路径 / 方法 过滤">
-          </div>
-          <div class="note" id="cap-count">0 条</div>
-          <div class="evlist" id="cap-list">
-            <div class="empty"><b>还没有请求</b>点上面的「开始自动捕获」，再把代理指过来</div>
-          </div>
-        </div>
-        <div>
-          <div id="cap-evidence" class="note">← 左边点一条</div>
-        </div>
-      </div>
     </div>
 
     <div class="card">
@@ -610,6 +592,35 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
           <div class="note" id="dt-count">0 条</div><div class="evlist" id="dt-list">
           <div class="empty"><b>还没有结果</b>先在上面点「开始检测」</div></div></div>
         <div><div id="dt-evidence" class="note">← 左边点一条</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>自动捕获</h2>
+        <span class="hint">把浏览器 / 客户端 / 系统代理指向<b>设置里那个端口</b>，请求自动进来跑差分 ——
+          HTTPS 只做 <code>CONNECT</code> 直通不拆包；仅用于你自有或已获授权的目标</span>
+        <button class="btn btn-ghost cap-settings" id="cap-open2">捕获设置…</button></div>
+      <div id="cap-err"></div>
+      <div class="statcards" id="cap-stats"></div>
+      <div class="split">
+        <div>
+          <div class="toolbar">
+            <select class="select" id="cap-filter">
+              <option value="all">全部</option>
+              <option value="security">只看安全级</option>
+              <option value="divergent">只看有分歧</option>
+              <option value="skipped">只看跳过 / 隧道</option>
+            </select>
+            <input class="input" id="cap-search" type="text" placeholder="按 host / 路径 / 方法 过滤">
+          </div>
+          <div class="note" id="cap-count">0 条</div>
+          <div class="evlist" id="cap-list">
+            <div class="empty"><b>还没有请求</b>点上面的「开始自动捕获」，再把代理指过来</div>
+          </div>
+        </div>
+        <div>
+          <div id="cap-evidence" class="note">← 左边点一条</div>
+        </div>
       </div>
     </div>
 
@@ -883,6 +894,30 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 
 
 </main>
+
+<!-- ===== 捕获设置小窗：原生 dialog（ESC / 点背景自动关），元素沿用原 id，逻辑不动 ===== -->
+<dialog class="sheet" id="cap-dlg">
+  <div class="sheet-hd"><h3>自动捕获设置</h3>
+    <button class="x" id="cap-dlg-x" title="关闭（Esc）">✕</button></div>
+  <div class="sheet-bd">
+    <label class="sheet-row"><span class="k">代理端口</span>
+      <input class="input" id="cap-port" type="text" value="18081"
+             title="别用 8080：Windows 常保留该端口"></label>
+    <label class="sheet-row"><span class="k">领域</span>
+      <select class="select" id="cap-domain"><option value="">全部 5 个领域</option></select></label>
+    <label class="sheet-row"><span class="k">静态资源</span>
+      <span class="check"><input type="checkbox" id="cap-all"> <span>连静态资源也分析</span></span></label>
+    <label class="sheet-row"><span class="k">记录文件</span>
+      <input class="input" id="cap-jsonl" type="text" placeholder="留空 = 不写（例：ced-capture.jsonl）"></label>
+    <div class="note" id="cap-default-hint">默认值存在「设置」页，点下面的按钮就把这几个字段写进去</div>
+    <div class="note" id="cap-dlg-state">当前状态：未启动</div>
+  </div>
+  <div class="sheet-ft">
+    <span class="note" id="cap-dlg-msg">直接关窗：只影响这一次；点「存为默认」：下次开页也用</span>
+    <button class="btn btn-primary" id="cap-save-default">存为默认</button>
+    <button class="btn btn-ghost" id="cap-dlg-close">关闭</button>
+  </div>
+</dialog>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -2115,8 +2150,10 @@ onTabShown('scan');
     if (el('cap-state').textContent.indexOf('运行中') !== 0){
       el('cap-port').value = s.capture.port;
       el('cap-all').checked = !!s.capture.analyze_all;
+      el('cap-jsonl').value = s.capture.jsonl || '';
       const doms = s.capture.domains || [];
       el('cap-domain').value = doms.length === 1 ? doms[0] : '';
+      if (window.refreshCapSummary) window.refreshCapSummary();
     }
     el('cap-default-hint').textContent = '默认值：端口 ' + s.capture.port
       + '，领域 ' + ((s.capture.domains || []).join(' / ') || '全部 5 个')
@@ -2125,22 +2162,24 @@ onTabShown('scan');
   }
   el('cap-save-default').onclick = async () => {
     const dom = el('cap-domain').value;
+    const jsonl = el('cap-jsonl').value.trim();
     const payload = {capture: {port: parseInt(el('cap-port').value, 10) || 18081,
                                analyze_all: el('cap-all').checked,
+                               jsonl: jsonl,
                                domains: dom ? [dom] : []}};
     try {
       const resp = await fetch('/api/settings', {method: 'POST',
         headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const info = await resp.json();
       if (info.error){
-        el('cap-err').innerHTML = '<div class="err">' + esc(info.error) + '</div>';
+        el('cap-dlg-msg').innerHTML = '<span class="err">保存失败：' + esc(info.error) + '</span>';
         return;
       }
       fillSettings(info.settings);
-      el('cap-err').innerHTML = '<div class="alert alert-info">已存为默认（端口 '
-        + payload.capture.port + '）。下次开页、或从服务端起捕获都会用它。</div>';
+      el('cap-dlg-msg').textContent = '已存为默认（端口 ' + payload.capture.port
+        + '）；下次开页、服务端起捕获都用它';
     } catch (err){
-      el('cap-err').innerHTML = '<div class="err">保存失败：' + esc(err) + '</div>';
+      el('cap-dlg-msg').innerHTML = '<span class="err">保存失败：' + esc(err) + '</span>';
     }
   };
   async function loadSettings(){
@@ -2344,8 +2383,10 @@ onTabShown('scan');
     box('cap-err').innerHTML = '';
     const port = parseInt(box('cap-port').value, 10);
     const domain = box('cap-domain').value;
+    const jsonl = box('cap-jsonl').value.trim();
     const payload = {port: isNaN(port) ? 18081 : port, analyze_all: box('cap-all').checked};
     if (domain) payload.domains = [domain];
+    if (jsonl) payload.jsonl = jsonl;
     try {
       const d = await (await fetch('/api/capture/start', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})).json();
@@ -2354,7 +2395,7 @@ onTabShown('scan');
       box('cap-list').innerHTML = '';
       box('cap-evidence').className = 'note';
       box('cap-evidence').textContent = '← 左边点一条';
-      box('cap-state').textContent = '运行中：代理 127.0.0.1:' + d.port + '（HTTP 明文；HTTPS 隧道直通）';
+      setCapState('运行中：代理 127.0.0.1:' + d.port + '（HTTP 明文；HTTPS 隧道直通）');
       box('cap-go').disabled = true; box('cap-stop').disabled = false;
       renderStats(d.summary);
       startPolling();
@@ -2364,7 +2405,7 @@ onTabShown('scan');
     try {
       const d = await (await fetch('/api/capture/stop', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: '{}'})).json();
-      box('cap-state').textContent = '已停止' + (d.summary ? '　' + d.summary.requests + ' 条请求 / 分歧 ' + d.summary.divergences : '');
+      setCapState('已停止' + (d.summary ? '　' + d.summary.requests + ' 条请求 / 分歧 ' + d.summary.divergences : ''));
       box('cap-go').disabled = false; box('cap-stop').disabled = true;
       stopPolling();
       renderStats(d.summary);
@@ -2372,6 +2413,39 @@ onTabShown('scan');
   }
   box('cap-go').onclick = go;
   box('cap-stop').onclick = stop;
+  /* ---- 捕获设置小窗：原生 dialog（ESC / 点背景自带关闭），控件沿用原 id ---- */
+  function capSummaryText(){
+    const port = parseInt(box('cap-port').value, 10) || 18081;
+    const sel = box('cap-domain');
+    const name = (sel.selectedIndex >= 0
+      ? sel.options[sel.selectedIndex].textContent : '全部 5 个领域').replace(/（[^）]*）$/, '');
+    const jsonl = box('cap-jsonl').value.trim();
+    return '端口 ' + port + ' · ' + name
+      + (box('cap-all').checked ? ' · 连静态资源' : ' · 跳过静态资源')
+      + (jsonl ? ' · 记录到 ' + jsonl : ' · 不写记录文件');
+  }
+  function refreshCapSummary(){ box('cap-summary').textContent = capSummaryText(); }
+  window.refreshCapSummary = refreshCapSummary;   // 「设置」页保存后要同步这一行
+  function setCapState(text){
+    const page = box('cap-state');
+    if (page) page.textContent = text;
+    const dlg = box('cap-dlg-state');
+    if (dlg) dlg.textContent = '当前状态：' + text;
+  }
+  function openCapSettings(){
+    box('cap-dlg-msg').textContent = '直接关窗：只影响这一次；点「存为默认」：下次开页也用';
+    refreshCapSummary();
+    const dlg = box('cap-dlg');
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');            // 老浏览器兜底
+  }
+  document.querySelectorAll('.cap-settings').forEach(b => { b.onclick = openCapSettings; });
+  box('cap-dlg-x').onclick = () => box('cap-dlg').close();
+  box('cap-dlg-close').onclick = () => box('cap-dlg').close();
+  ['cap-port','cap-domain','cap-all','cap-jsonl'].forEach(id => {
+    box(id).addEventListener('input', refreshCapSummary);
+    box(id).addEventListener('change', refreshCapSummary);
+  });
   box('cap-filter').onchange = renderList;
   box('cap-search').oninput = renderList;
   (async function sync(){
@@ -2388,7 +2462,7 @@ onTabShown('scan');
       const d = await (await fetch('/api/capture/state')).json();
       if (d.running){
         box('cap-port').value = d.port;
-        box('cap-state').textContent = '运行中：代理 127.0.0.1:' + d.port;
+        setCapState('运行中：代理 127.0.0.1:' + d.port);
         box('cap-go').disabled = true; box('cap-stop').disabled = false;
         renderStats(d.summary);
         startPolling();

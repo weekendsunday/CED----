@@ -194,7 +194,7 @@ HELLO
 | 4 | ✅ | 8080→80 / 8081→8081 / 8090→8090 映射正常；`curl 127.0.0.1:8801/health` → `{"status":"ok"}`；`curl 127.0.0.1:8080/` 回的就是探针观测 JSON |
 | 5 | ⚠️ 实测到与预期不同的行为 | 见下「nginx 1.25.5 的定帧实测」 |
 | 6 | ✅（含一处更正） | 真 gunicorn **23.0.0** 跑通（8090 直连 0.01s 返回探针观测）；`--forwarded-allow-ips` 的作用被更正，见下 |
-| 7 | ⚠️ 需加一个参数 | 三个 `.ps1` 都能跑，但**必须 `-ExecutionPolicy Bypass`**：默认 Restricted 策略下 `-File` 直接被拒（`Get-ExecutionPolicy -List` 各作用域均为 Undefined = 客户端默认 Restricted） |
+| 7 | ⚠️ 两个发现 | ①**必须 `-ExecutionPolicy Bypass`**：默认 Restricted 策略下 `-File` 直接被拒（`Get-ExecutionPolicy -List` 各作用域均为 Undefined = 客户端默认 Restricted）；②`snapshot.ps1` 另有真 bug：`$PSScriptRoot` 在 **param 默认值**里是空的，`Join-Path` 直接报错、脚本根本起不来（`up.ps1`/`down.ps1` 只在函数体里用它，故不受影响）—— 已把默认值改到函数体里算。修完后三个脚本全部实机跑过：`up.ps1` 起栈并等到探针 ready；`down.ps1` 清干净；`snapshot.ps1` 存出 3 个 tar + manifest（sha256），`-Verify` 逐条 `[OK]` |
 | 8 | ❌ 文档原假设有误 | 同第 6 项：`--forwarded-allow-ips` 不改写 `REMOTE_ADDR` |
 
 #### nginx 1.25.5 的定帧实测（第 5 项，`docker compose logs front` + 探针 `/views`）
@@ -223,7 +223,7 @@ HELLO
 **这个开关只管 secure header，不管 `REMOTE_ADDR`。** 原文里「用 `/environ` 的 REMOTE_ADDR
 前后对比就能看到差别」是错的；上面「第二档」小节已按实测更正。
 
-#### 本轮实测暴露并已修掉的三个缺陷
+#### 本轮实测暴露并已修掉的四个缺陷
 
 1. **compose 固定 IP 冲突（必现）**：原先只给 `gateway`/`backend` 写了 `ipv4_address`，
    而先启动的 `probe`/`front` 会被动态分到 `.2`/`.3` —— 之后 `gateway` 想按固定地址起在 `.3` 上直接
@@ -242,6 +242,77 @@ HELLO
    修法：抽共用的 `classify.upgradability.still_diverges`，候选被拒时**保守返回「分歧仍在」**
    （即该候选不算承载者，宁愿少升级也不凭空造可控性证据）；最小化谓词同样处理。
    回归测试见 `test_pipeline.py::TestAblationGuard`。
+
+4. **把「前置静默丢弃某条请求」误判成链路故障**：真 gunicorn 对裸 LF 分行、大写块长（`0A`）
+   这类它不认的写法，**既不转发、也不回响应**（实测：同一批 33 条语料里有 4 条如此）。
+   而链路器原来把「没转发 + 没回响应」一律当链路故障 → 第二档拓扑的扫描跑到半路就中止
+   （`--limit 12` 跑 138s 后崩在第 22 条）。修法：这种情况再发**一条最小正常请求**复探活性 ——
+   探针还能记到视角 = 链路活着 = 这条只是「该前置不接受」，跳过并计数；复探也拿不到视角
+   = 链路真坏了，仍然中止。两条测试把这条边界钉住（`silent_drop_front.py` 与「前置活着但上游不通」）。
+
+#### 续测（2026-10-03）：原「仍未覆盖」三项的结论
+
+| 原缺口 | 结论 |
+|---|---|
+| 真实客户产品接入 | ✅ 机制已验证（换 haproxy，零代码改动，出安全级发现 + PoC）—— 见下「换一种客户产品」 |
+| `real-nginx-gunicorn.yaml` 端到端扫描 | ✅ 跑通：`用例 12 | 实现对 14 | 耦合误差 55 | 安全级 1`，约 620s；报告 `results/real-gunicorn.md` |
+| `snapshot.ps1 -Load` 断网恢复 | ✅ 跑通：`down.ps1` → `docker rmi` 三个镜像（只剩 python 基础镜像）→ `-Load` 逐条校验 sha256 后全部恢复 → `up.ps1` 用恢复出来的镜像起栈成功 |
+
+仍**未**覆盖：客户现场的真实产品（版本与配置各异 —— 下面的对照表说明了对 CL+TE / chunked 的
+处置是**版本相关**的，换产品要重跑）；以及第二档拓扑 `--limit 12` 要跑约 10 分钟这件事
+（每条用例受探针 5 秒空闲超时制约），现场演示请预留时间或调小 `--limit`。
+
+#### 换一种客户产品：haproxy（可选扩展，已实测）
+
+「接客户产品」不绑定 nginx —— 拓扑里 `runner: chain` 指向谁，引擎就观测谁转发出去的字节。
+本机用第二种真实产品验过一遍，**不动任何代码**，只加一个容器 + 一个临时拓扑：
+
+```yaml
+# haproxy.cfg —— 挂到 /usr/local/etc/haproxy/haproxy.cfg
+global
+    maxconn 256
+defaults
+    mode http
+    timeout connect 3s
+    timeout client 30s     # 探针靠 5 秒空闲超时判定输入结束，别让 haproxy 先断链
+    timeout server 60s
+    option httplog
+    log stdout format raw local0
+frontend ced
+    bind *:80
+    default_backend cedprobe
+backend cedprobe
+    server probe probe:8800
+```
+
+```
+docker run -d --name ced-haproxy --network ced-bench_cednet --ip 172.28.0.6 ^
+  -p 127.0.0.1:8082:80 -v <上面这个 cfg>:/usr/local/etc/haproxy/haproxy.cfg:ro haproxy:2.9-alpine
+# 拓扑照抄 real-nginx-probe.yaml，只把 endpoint 换成 127.0.0.1:8082
+python -m ced scan --topology <临时拓扑> --limit 6 --no-minimize
+```
+
+实测：`用例 6 | 耦合误差 4 | 安全级 2`，并生成 PoC。代表样本与判定：
+
+```
+POST / HTTP/1.1\r\nHost: localhost\r\nHost: localhost\r\nContent-Length: 3\r\n\r\nabc
+```
+
+haproxy 把**重复的 `Host` 头**合并掉了 —— 它转发给后端的字节数比客户端发的**少 17 字节**
+（`consumed`：haproxy 58 / 参照 75，差值正好是那条重复头），消融实验把承载者精确定位到那条
+重复 `Host`，判定 security / CWE-444 / desync。
+
+**顺带得到一张「同一份字节、两种真实产品」的对照表**（同一批用例喂给同一个探针）：
+
+| 用例 | nginx 1.25.5 | haproxy 2.9 |
+|---|---|---|
+| 基线 GET | 转发，`framing_source: none` | 同 |
+| CL 与 TE 并存 | **400，不转发** | **按 TE 转发**（`framing_source: te`，丢掉 CL） |
+| 仅 chunked | **解成 CL 重发**（`te: []`、`cl: 5`） | **原样保留**（`te: [chunked]`） |
+| CL 前导零 `05` | 归一化成 `5` | 归一化成 `5` |
+
+这张表就是本项目的立论本身：**同一份字节、两个单独看都没问题的产品，读出的边界不一样**；
+差异能不能变成漏洞，取决于它们后面接的是什么 —— 所以探针要放在后面看。
 
 #### 仍未覆盖的三项
 

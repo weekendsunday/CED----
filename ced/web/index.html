@@ -446,6 +446,7 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
 </style>
 <style>
 /* ===== 单一入口：DAG / 实时报告 / 设置（新增，不动既有样式）===== */
+.toolbar .cap-port{flex:0 0 86px;width:86px;min-width:0}
 .dag{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .dag .node{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);min-width:118px;transition:border-color .15s,background .15s}
 .dag .node .t{font-size:13px;font-weight:600}
@@ -507,13 +508,55 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
         <input type="file" id="dt-file" hidden>
         <select class="select" id="dt-sample"><option value="">载入示例…</option></select>
         <select class="select" id="dt-domain"><option value="">全部 5 个领域</option></select>
-        <span class="note" id="dt-hint">识别与编排全自动；判定由确定性内核给出</span>
+      </div>
+      <div class="toolbar">
+        <span class="note">或让请求自己流进来：</span>
+        <input class="input cap-port" id="cap-port" type="text" value="18081"
+               title="自动捕获代理端口（别用 8080：Windows 常保留该端口）">
+        <button class="btn btn-ghost" id="cap-go">开始自动捕获</button>
+        <button class="btn btn-danger" id="cap-stop" disabled>停止</button>
+        <span class="note" id="cap-state">未启动</span>
+      </div>
+      <div class="toolbar"><span class="note" id="dt-hint">识别与编排全自动；判定由确定性内核给出</span></div>
       </div>
       <div id="dt-err"></div>
       <div id="dt-warn"></div>
       <div class="note">原始请求要<b>字节保真</b>：用「选择文件」读抓包导出的 .bin/.txt（按字节读入），
         或直接用下面的「自动捕获」；<b>粘贴框里的 CRLF 会被浏览器规范化成 LF</b>（粘文本类输入如
         nuclei / curl / URL 清单则无妨）。文件按字节读入 —— 含中文的文本类文件在框里显示可能乱码，不影响分析。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><h2>自动捕获</h2>
+        <span class="hint">把浏览器 / 客户端 / 系统代理指向上面那个端口，请求<b>自动</b>进来跑差分 ——
+          HTTPS 只做 <code>CONNECT</code> 直通不拆包；仅用于你自有或已获授权的目标</span></div>
+      <div class="toolbar">
+        <select class="select" id="cap-domain"><option value="">全部 5 个领域</option></select>
+        <label class="check"><input type="checkbox" id="cap-all"> <span>连静态资源也分析</span></label>
+        <span class="note">同一份字节只分析一次；点一行看证据、一键出最小复现样本与 PoC</span>
+      </div>
+      <div id="cap-err"></div>
+      <div class="statcards" id="cap-stats"></div>
+      <div class="split">
+        <div>
+          <div class="toolbar">
+            <select class="select" id="cap-filter">
+              <option value="all">全部</option>
+              <option value="security">只看安全级</option>
+              <option value="divergent">只看有分歧</option>
+              <option value="skipped">只看跳过 / 隧道</option>
+            </select>
+            <input class="input" id="cap-search" type="text" placeholder="按 host / 路径 / 方法 过滤">
+          </div>
+          <div class="note" id="cap-count">0 条</div>
+          <div class="evlist" id="cap-list">
+            <div class="empty"><b>还没有请求</b>点上面的「开始自动捕获」，再把代理指过来</div>
+          </div>
+        </div>
+        <div>
+          <div id="cap-evidence" class="note">← 左边点一条</div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -711,58 +754,6 @@ details.sect{margin-top:var(--s4);padding:0 var(--s4)}
   </section>
     </details>
 
-    <details class="fold"><summary>自动捕获（本机代理，无需手动导出）</summary>
-  <section class="legacy" id="tab-capture">
-    <div class="card">
-      <div class="card-hd"><h2>自动捕获</h2>
-        <span class="hint">把浏览器或系统代理指向本端口，请求<b>自动</b>进差分 ——
-          输入是<b>字节</b>，不是源码/程序；HTTPS 只做隧道直通</span></div>
-      <div class="form-row-3">
-        <div class="field"><label>代理端口</label>
-          <input class="input" type="text" id="cap-port" value="18081"></div>
-        <div class="field"><label>领域</label><select class="select" id="cap-domain">
-          <option value="">全部 5 个领域</option></select></div>
-        <div class="field"><label class="check"><input type="checkbox" id="cap-all">
-          <span>连静态资源也分析</span></label></div>
-      </div>
-      <div class="toolbar">
-        <button class="btn btn-primary" id="cap-go">开始捕获</button>
-        <button class="btn btn-danger" id="cap-stop" disabled>停止</button>
-        <span class="note" id="cap-state">未启动</span>
-      </div>
-      <div id="cap-err"></div>
-      <div class="statcards" id="cap-stats"></div>
-      <div class="note">用法：把浏览器/客户端的 HTTP 代理设成
-        <code>127.0.0.1:&lt;端口&gt;</code>（或设成系统代理），然后正常访问自己的站点即可。
-        仅用于你自有或已获授权的目标。</div>
-    </div>
-
-    <div class="card">
-      <div class="card-hd"><h2>捕获到的请求</h2>
-        <span class="hint">同一份字节只分析一次；点一行看证据、一键出最小复现样本与 PoC</span></div>
-      <div class="split">
-        <div>
-          <div class="toolbar">
-            <select class="select" id="cap-filter">
-              <option value="all">全部</option>
-              <option value="security">只看安全级</option>
-              <option value="divergent">只看有分歧</option>
-              <option value="skipped">只看跳过 / 隧道</option>
-            </select>
-            <input class="input" id="cap-search" type="text" placeholder="按 host / 路径 / 方法 过滤">
-          </div>
-          <div class="note" id="cap-count">0 条</div>
-          <div class="evlist" id="cap-list">
-            <div class="empty"><b>还没有请求</b>点上面的「开始捕获」，再把代理指过来</div>
-          </div>
-        </div>
-        <div>
-          <div id="cap-evidence" class="note">← 左边点一条</div>
-        </div>
-      </div>
-    </div>
-  </section>
-    </details>
   </section>
 
   <!-- ============ 设置 ============ -->

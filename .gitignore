@@ -12,3 +12,6 @@ refs/
 
 # 自动捕获的记录（本机代理跑出来的流量记录，含真实请求，绝不入库）
 /capture.jsonl
+
+# 网页「设置」面板保存的配置（含模型 API Key，绝不入库）
+/ced-settings.json

@@ -10,19 +10,45 @@
 from __future__ import annotations
 
 import base64
+import json
 import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ced.capture import Config, analyze
 from ced.capture.proxy import CaptureProxy
+from ced.web.server import _bind
+
+
+def _post(base: str, path: str, payload: dict) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        base + path, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def _get(base: str, path: str) -> tuple[int, dict]:
+    try:
+        with urllib.request.urlopen(base + path, timeout=60) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 BENIGN = (b"POST /a HTTP/1.1\r\nHost: example.com\r\nContent-Length: 3\r\n\r\nabc")
+#: 同一个"正常请求"，但上游指向一个必然拒绝的端口 —— 转发立刻失败，测试不用等超时
+FAST = (b"POST /a HTTP/1.1\r\nHost: 127.0.0.1:9\r\nContent-Length: 3\r\n\r\nabc")
 CL_TE = (b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 48\r\n"
          b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
          b"GET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -292,6 +318,121 @@ class TestAnalyzeFanout(unittest.TestCase):
     def test_domain_subset_is_respected(self):
         result = analyze(CL_TE, domains=["http1-framing"])
         self.assertEqual(list(result.domains), ["http1-framing"])
+
+
+class TestCaptureWebApi(unittest.TestCase):
+    """网页接口：起 / 停 / 记录 / 详情 / 一键 PoC —— 走真 HTTP，不 mock。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._httpd = _bind("127.0.0.1", 0)
+        cls.base = f"http://127.0.0.1:{cls._httpd.server_address[1]}"
+        threading.Thread(target=cls._httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._httpd.shutdown()
+        cls._httpd.server_close()
+
+    def setUp(self) -> None:
+        import ced.capture.web as capture_web
+
+        from ced.web.server import CAPTURE
+
+        CAPTURE.stop()                      # 每个用例从干净状态开始
+        self.addCleanup(CAPTURE.stop)
+        self.port = _free_port()
+        # PoC 落到临时目录，别污染仓库的 results/pocs
+        scratch = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(scratch.cleanup)
+        self._old_poc_dir = capture_web.POC_DIR
+        capture_web.POC_DIR = Path(scratch.name)
+        self.addCleanup(lambda: setattr(capture_web, "POC_DIR", self._old_poc_dir))
+
+    def _drive(self, payload: bytes) -> None:
+        """把一条原始字节送进代理（上游不存在也行：记录照收、分析照跑）。"""
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(payload)
+            sock.settimeout(5)
+            try:
+                while sock.recv(65536):
+                    pass
+            except socket.timeout:
+                pass
+
+    def _start(self, domains=None) -> dict:
+        status, body = _post(self.base, "/api/capture/start",
+                             {"port": self.port, "domains": domains or []})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["ok"])
+        return body
+
+    def test_conflicts_and_bad_domains_are_reported_at_once(self):
+        """端口冲突 / 领域写错都要当场报错，而不是死在后台线程里。"""
+        status, body = _post(self.base, "/api/capture/start", {"port": self.port})
+        self.assertEqual(status, 200)
+        status, body = _post(self.base, "/api/capture/start", {"port": self.port})
+        self.assertEqual(status, 400)
+        self.assertIn("已经在跑", body["error"])
+
+        status, body = _post(self.base, "/api/capture/start",
+                             {"port": self.port + 1, "domains": ["不存在的领域"]})
+        self.assertEqual(status, 400)
+        self.assertIn("未知领域", body["error"])
+
+        status, body = _get(self.base, "/api/capture/state")
+        self.assertTrue(body["running"], "报错不该把已经跑起来的代理弄停")
+
+    def test_records_detail_and_poc(self):
+        """完整链路：起 → 收 → 看详情 → 一键出 PoC → 停。"""
+        self._start(["http1-framing"])
+        self._drive(CL_TE)
+
+        def analyzed() -> bool:
+            records = _get(self.base, "/api/capture/records?since=0")[1]["records"]
+            return bool(records and records[0].get("analysis"))
+
+        self.assertTrue(_wait(analyzed), "没有分析出结果")
+
+        _, body = _get(self.base, "/api/capture/records?since=0")
+        self.assertEqual(body["summary"]["analyzed"], 1)
+        self.assertGreater(body["summary"]["divergences"], 0)
+        case_id = body["records"][0]["case_id"]
+
+        _, detail = _get(self.base, f"/api/capture/record?case_id={case_id}")
+        self.assertEqual(detail["case_id"], case_id)
+        self.assertIn(b"Transfer-Encoding", base64.b64decode(detail["raw_b64"])
+                      + detail["raw_preview"].encode())
+
+        _, poc = _post(self.base, "/api/capture/poc", {"case_id": case_id})
+        self.assertTrue(poc["ok"], poc)
+        self.assertTrue(Path(poc["path"]).is_file(), "PoC 脚本没有落盘")
+        self.assertEqual(poc["cwe"], "CWE-444")
+        self.assertTrue(poc["steps"], "PoC 应当带复现步骤")
+
+        _, stopped = _post(self.base, "/api/capture/stop", {})
+        self.assertFalse(stopped["running"])
+        _, state = _get(self.base, "/api/capture/state")
+        self.assertFalse(state["running"])
+
+    def test_duplicate_counts_are_exposed_for_the_ui(self):
+        """重复请求只分析一次，并把次数通过 counts 给前端刷新 ×N。"""
+        self._start(["http1-framing"])
+        for _ in range(3):
+            self._drive(FAST)                # 同一份字节三次
+        self.assertTrue(_wait(lambda: _get(self.base, "/api/capture/records")[1]
+                              .get("counts")), "counts 没有回传")
+        _, body = _get(self.base, "/api/capture/records?since=0")
+        self.assertEqual(len(body["records"]), 1, "同一份字节只该有一条记录")
+        case_id = body["records"][0]["case_id"]
+        self.assertEqual(body["counts"].get(case_id), 3)
+        self.assertEqual(body["summary"]["analyzed"], 1, "只该分析一次")
+
+    def test_poc_on_unknown_case_is_a_readable_error(self):
+        self._start(["http1-framing"])
+        status, body = _post(self.base, "/api/capture/poc", {"case_id": "deadbeef"})
+        self.assertEqual(status, 400)
+        self.assertIn("error", body)
 
 
 if __name__ == "__main__":

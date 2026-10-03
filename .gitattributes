@@ -2,3 +2,6 @@
 * text=auto eol=lf
 *.bat text eol=crlf
 *.sh text eol=lf
+
+# samples/ 里的 .bin 是**原始字节**（HTTP 请求必须字节保真）—— 禁止任何换行规范化
+samples/**/*.bin -text

@@ -44,6 +44,8 @@ TEST_FILES = (
     "ced/tests/test_cluster.py",
     "ced/tests/test_probe_domains.py",
     "ced/tests/test_capture.py",
+    "ced/tests/test_detect.py",
+    "ced/tests/test_samples.py",
 )
 
 

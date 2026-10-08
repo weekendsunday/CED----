@@ -297,7 +297,7 @@ class TestClient(unittest.TestCase):
         self.assertEqual(seen["timeout"], 60.0)
         self.assertEqual(seen["body"]["model"], "m")
         self.assertEqual(seen["body"]["temperature"], 0.3)
-        self.assertEqual(seen["body"]["max_tokens"], 2048)
+        self.assertEqual(seen["body"]["max_tokens"], 32768)
         self.assertEqual(seen["body"]["messages"][0]["content"], "hi")
         self.assertEqual(seen["headers"]["Authorization"], "Bearer sk-k")
 

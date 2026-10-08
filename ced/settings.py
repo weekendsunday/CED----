@@ -27,7 +27,7 @@ DEFAULTS: dict = {
         "api_key": "",
         "timeout": 60.0,
         "temperature": 0.3,
-        "max_tokens": 2048,
+        "max_tokens": 32768,     # 推理模型的思考也计入 max_tokens，给小了会只剩空 content
     },
     "capture": {
         "port": 18081,           # 自动捕获代理端口（别用 8080：Windows 常保留该端口）

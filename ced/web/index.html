@@ -2206,7 +2206,7 @@ $('#set-dlg-close').onclick = () => $('#set-dlg').close();
             model: el('set-llm-model').value.trim(),
             timeout: parseFloat(el('set-llm-timeout').value) || 60,
             temperature: parseFloat(el('set-llm-temp').value) || 0.3,
-            max_tokens: parseInt(el('set-llm-tokens').value, 10) || 2048},
+            max_tokens: parseInt(el('set-llm-tokens').value, 10) || 32768},
       capture: {port: parseInt(el('set-cap-port').value, 10) || 18081,
                 jsonl: el('set-cap-jsonl').value.trim(),
                 analyze_all: el('set-cap-all').checked},

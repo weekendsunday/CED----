@@ -23,7 +23,8 @@ class LlmConfig:
     api_key: str = ""
     timeout: float = 60.0
     temperature: float = 0.3
-    max_tokens: int = 2048
+    #: 上限要留给推理模型的思考 —— 思考同样计入这个额度，给小了 content 会是空的
+    max_tokens: int = 32768
 
     @property
     def ready(self) -> bool:
@@ -43,7 +44,7 @@ def config_from_env(env: Mapping[str, str] | None = None) -> LlmConfig:
         api_key=_get(env, "CED_LLM_API_KEY"),
         timeout=_as_float(_get(env, "CED_LLM_TIMEOUT"), 60.0),
         temperature=_as_float(_get(env, "CED_LLM_TEMPERATURE"), 0.3),
-        max_tokens=_as_int(_get(env, "CED_LLM_MAX_TOKENS"), 2048),
+        max_tokens=_as_int(_get(env, "CED_LLM_MAX_TOKENS"), 32768),
     )
 
 
